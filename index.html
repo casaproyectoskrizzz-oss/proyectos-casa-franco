@@ -8,9 +8,6 @@
 </head>
 <body>
 
-<!-- ═══════════════════════════════════════════
-     LOGIN
-═══════════════════════════════════════════ -->
 <div id="loginScreen" class="screen-center">
   <div class="login-card">
     <div class="login-logo">
@@ -39,12 +36,7 @@
   </div>
 </div>
 
-<!-- ═══════════════════════════════════════════
-     APP PRINCIPAL
-═══════════════════════════════════════════ -->
 <div id="mainApp" class="hidden">
-
-  <!-- SIDEBAR -->
   <aside id="sidebar">
     <div class="sidebar-logo">
       <span class="logo-icon">🏠</span>
@@ -60,14 +52,12 @@
     <nav id="sidebarNav"></nav>
     <button class="btn-logout" onclick="logout()">⬅ Cerrar sesión</button>
   </aside>
-
-  <!-- CONTENIDO PRINCIPAL -->
   <main id="mainContent">
     <div id="pageContent"></div>
   </main>
-
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="script.js"></script>
 </body>
 </html>
