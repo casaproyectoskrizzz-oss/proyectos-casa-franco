@@ -117,6 +117,7 @@ function initApp() {
 }
  
 async function goTo(pageId) {
+ closeSidebar();
   currentPage = pageId;
   document.querySelectorAll('.nav-item').forEach(el =>
     el.classList.toggle('active', el.dataset.page === pageId));
