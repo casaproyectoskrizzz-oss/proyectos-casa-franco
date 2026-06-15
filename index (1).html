@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Casa Manager</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════
+     LOGIN
+═══════════════════════════════════════════ -->
+<div id="loginScreen" class="screen-center">
+  <div class="login-card">
+    <div class="login-logo">
+      <i class="icon">🏠</i>
+      <h1>Casa Manager</h1>
+      <p>Sistema de gestión de propiedad</p>
+    </div>
+    <div class="form-group">
+      <label>Correo electrónico</label>
+      <input type="email" id="loginEmail" placeholder="correo@email.com" />
+    </div>
+    <div class="form-group">
+      <label>Contraseña</label>
+      <input type="password" id="loginPass" placeholder="••••••••" />
+    </div>
+    <p id="loginError" class="error-msg"></p>
+    <button class="btn btn-primary btn-full" onclick="doLogin()">Entrar</button>
+    <p class="login-hint">Demo: usa los correos de prueba abajo con contraseña <strong>Casa2024!</strong></p>
+    <div class="demo-users">
+      <span onclick="fillDemo('admin@casa.com')">admin@casa.com</span>
+      <span onclick="fillDemo('encargado@casa.com')">encargado@casa.com</span>
+      <span onclick="fillDemo('pintura@casa.com')">pintura@casa.com</span>
+      <span onclick="fillDemo('tecnico@casa.com')">tecnico@casa.com</span>
+      <span onclick="fillDemo('limpieza@casa.com')">limpieza@casa.com</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     APP PRINCIPAL
+═══════════════════════════════════════════ -->
+<div id="mainApp" class="hidden">
+
+  <!-- SIDEBAR -->
+  <aside id="sidebar">
+    <div class="sidebar-logo">
+      <span class="logo-icon">🏠</span>
+      <span class="logo-text">Casa Manager</span>
+    </div>
+    <div class="sidebar-user">
+      <div class="user-avatar" id="sidebarAvatar">AD</div>
+      <div>
+        <div class="user-name" id="sidebarName">Admin</div>
+        <div class="user-role-badge" id="sidebarRoleBadge">Administrador</div>
+      </div>
+    </div>
+    <nav id="sidebarNav"></nav>
+    <button class="btn-logout" onclick="logout()">⬅ Cerrar sesión</button>
+  </aside>
+
+  <!-- CONTENIDO PRINCIPAL -->
+  <main id="mainContent">
+    <div id="pageContent"></div>
+  </main>
+
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
