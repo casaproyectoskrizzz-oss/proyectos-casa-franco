@@ -25,18 +25,15 @@
     </div>
     <p id="loginError" class="error-msg"></p>
     <button class="btn btn-primary btn-full" onclick="doLogin()">Entrar</button>
-    <p class="login-hint">Demo: usa los correos de prueba abajo con contraseña <strong>Casa2024!</strong></p>
-    <div class="demo-users">
-      <span onclick="fillDemo('admin@casa.com')">admin@casa.com</span>
-      <span onclick="fillDemo('encargado@casa.com')">encargado@casa.com</span>
-      <span onclick="fillDemo('pintura@casa.com')">pintura@casa.com</span>
-      <span onclick="fillDemo('tecnico@casa.com')">tecnico@casa.com</span>
-      <span onclick="fillDemo('limpieza@casa.com')">limpieza@casa.com</span>
-    </div>
   </div>
 </div>
 
 <div id="mainApp" class="hidden">
+  <div class="sidebar-overlay" id="overlay" onclick="closeSidebar()"></div>
+  <div class="mobile-header">
+    <button class="hamburger" onclick="toggleSidebar()">☰</button>
+    <span style="font-size:15px;font-weight:600;color:var(--cyan)">🏠 Casa Manager</span>
+  </div>
   <aside id="sidebar">
     <div class="sidebar-logo">
       <span class="logo-icon">🏠</span>
@@ -56,11 +53,7 @@
     <div id="pageContent"></div>
   </main>
 </div>
-<div class="sidebar-overlay" id="overlay" onclick="closeSidebar()"></div>
-<div class="mobile-header">
-  <button class="hamburger" onclick="toggleSidebar()">☰</button>
-  <span style="font-size:15px;font-weight:600;color:var(--cyan)">🏠 Casa Manager</span>
-</div>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="script.js"></script>
 </body>
