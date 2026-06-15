@@ -1,12 +1,30 @@
 // ═══════════════════════════════════════════
-//  CASA MANAGER — script.js con Supabase
+//  CASA MANAGER — script.js
 // ═══════════════════════════════════════════
-
+ 
+// ── SUPABASE ───────────────────────────────
 const SUPA_URL = 'https://wiewpmkgsbsxgwljnhmu.supabase.co';
 const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndpZXdwbWtnc2JzeGd3bGpuaG11Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE1Mjk3MjUsImV4cCI6MjA5NzEwNTcyNX0.UxfZBpVwkWvGNsJpx3BnJxM9NHMF76-A3lYTIfIU8GM';
-const { createClient } = supabase;
-const sb = createClient(SUPA_URL, SUPA_KEY);
+ 
+// Esperar a que el DOM y Supabase estén listos
+let sb;
+window.addEventListener('load', function() {
+  sb = window.supabase.createClient(SUPA_URL, SUPA_KEY);
+ 
+  sb.auth.onAuthStateChange(async (event, session) => {
+    if (session) {
+      await loadMe(session.user.id);
+      await loadGlobal();
+      document.getElementById('loginScreen').classList.add('hidden');
+      document.getElementById('mainApp').classList.remove('hidden');
+      initApp();
+    } else {
+      document.getElementById('mainApp').classList.add('hidden');
+      document.getElementById('loginScreen').classList.remove('hidden');
+    }
+  });
 });
+ 
 // ── CONFIG ROLES ───────────────────────────
 const ROLES = {
   admin:     { label: 'Administrador',     badge: 'badge-admin',    avatarBg: '#7c3cff22', avatarColor: '#7c3cff' },
@@ -15,7 +33,7 @@ const ROLES = {
   tecnico:   { label: 'Técnico',           badge: 'badge-tecnico',  avatarBg: '#d2992222', avatarColor: '#d29922' },
   limpieza:  { label: 'Limpieza',          badge: 'badge-limpieza', avatarBg: '#3fb95022', avatarColor: '#3fb950' },
 };
-
+ 
 const NAV = {
   admin:     [{ id:'resumen', icon:'📊', label:'Resumen' },{ id:'empleados', icon:'👤', label:'Empleados' },{ id:'tareas', icon:'✅', label:'Tareas' },{ id:'equipo', icon:'👥', label:'Equipo y pagos' },{ id:'cotizacion', icon:'📋', label:'Cotización' }],
   encargado: [{ id:'resumen', icon:'📊', label:'Resumen' },{ id:'mis-tareas', icon:'✅', label:'Mis tareas' },{ id:'tareas', icon:'📝', label:'Tareas equipo' },{ id:'equipo', icon:'👥', label:'Equipo y pagos' }],
@@ -23,21 +41,21 @@ const NAV = {
   tecnico:   [{ id:'mis-tareas', icon:'✅', label:'Mis tareas' },{ id:'mis-pagos', icon:'💰', label:'Mis pagos' }],
   limpieza:  [{ id:'mis-tareas', icon:'✅', label:'Mis tareas' },{ id:'mis-pagos', icon:'💰', label:'Mis pagos' }],
 };
-
+ 
 // ── ESTADO ─────────────────────────────────
 let ME = null;
 let currentPage = null;
 let tareasPredef = [];
 let empleados = [];
-
+ 
 // ── HELPERS ────────────────────────────────
-const $ = id => document.getElementById(id);
+function $(id) { return document.getElementById(id); }
 const fmtMoney = n => '$' + Number(n||0).toLocaleString('es-MX');
 const fmtDate  = d => d ? new Date(d+'T12:00:00').toLocaleDateString('es-MX',{day:'2-digit',month:'short',year:'numeric'}) : '';
 const fmtDT    = iso => iso ? new Date(iso).toLocaleDateString('es-MX',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) : '';
 const isOver   = t => !t.done && t.fecha_limite && new Date(t.fecha_limite) < new Date();
 const initials = n => n ? n.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase() : '??';
-
+ 
 function rolBadge(rol) {
   return `<span class="badge badge-${rol}">${ROLES[rol]?.label||rol}</span>`;
 }
@@ -51,19 +69,29 @@ function rolesAsignables() {
   if (ME.rol === 'encargado') return ['pintura','tecnico','limpieza'];
   return [];
 }
-
+ 
 // ═══════════════════════════════════════════
 //  AUTH
 // ═══════════════════════════════════════════
+function fillDemo(email) {
+  $('loginEmail').value = email;
+  $('loginPass').value = '';
+  $('loginPass').focus();
+}
+ 
 async function doLogin() {
   const email = $('loginEmail').value.trim();
   const pass  = $('loginPass').value;
-  $('loginError').textContent = '';
-
+  $('loginError').textContent = 'Entrando...';
+ 
   const { error } = await sb.auth.signInWithPassword({ email, password: pass });
-  if (error) { $('loginError').textContent = 'Correo o contraseña incorrectos.'; return; }
+  if (error) {
+    $('loginError').textContent = 'Correo o contraseña incorrectos.';
+    return;
+  }
+  $('loginError').textContent = '';
 }
-
+ 
 async function logout() {
   await sb.auth.signOut();
   ME = null;
@@ -72,25 +100,12 @@ async function logout() {
   $('loginEmail').value = '';
   $('loginPass').value = '';
 }
-
-sb.auth.onAuthStateChange(async (event, session) => {
-  if (session) {
-    await loadMe(session.user.id);
-    await loadGlobal();
-    $('loginScreen').classList.add('hidden');
-    $('mainApp').classList.remove('hidden');
-    initApp();
-  } else {
-    $('mainApp').classList.add('hidden');
-    $('loginScreen').classList.remove('hidden');
-  }
-});
-
+ 
 async function loadMe(uid) {
   const { data } = await sb.from('perfiles').select('*').eq('id', uid).single();
   ME = data;
 }
-
+ 
 async function loadGlobal() {
   const [{ data: tp }, { data: emp }] = await Promise.all([
     sb.from('tareas_predefinidas').select('*').order('rol').order('orden'),
@@ -99,7 +114,7 @@ async function loadGlobal() {
   tareasPredef = tp || [];
   empleados    = emp || [];
 }
-
+ 
 // ═══════════════════════════════════════════
 //  INIT APP
 // ═══════════════════════════════════════════
@@ -111,17 +126,17 @@ function initApp() {
   av.style.color = rc.avatarColor;
   $('sidebarName').textContent = ME.nombre;
   $('sidebarRoleBadge').innerHTML = `<span class="badge ${rc.badge}">${rc.label}</span>`;
-
+ 
   const nav = $('sidebarNav');
   nav.innerHTML = NAV[ME.rol].map(n =>
     `<div class="nav-item" data-page="${n.id}" onclick="goTo('${n.id}')">
       <span class="nav-icon">${n.icon}</span><span>${n.label}</span>
     </div>`
   ).join('');
-
+ 
   goTo(NAV[ME.rol][0].id);
 }
-
+ 
 async function goTo(pageId) {
   currentPage = pageId;
   document.querySelectorAll('.nav-item').forEach(el =>
@@ -138,7 +153,7 @@ async function goTo(pageId) {
     case 'cotizacion': await renderCotizacion(); break;
   }
 }
-
+ 
 // ═══════════════════════════════════════════
 //  RESUMEN
 // ═══════════════════════════════════════════
@@ -147,22 +162,22 @@ async function renderResumen() {
   if (ME.rol === 'encargado') q = q.in('rol',['pintura','tecnico','limpieza','encargado']);
   const { data: tareas } = await q;
   const all = tareas || [];
-
+ 
   const total   = all.length;
   const done    = all.filter(t=>t.done).length;
   const pending = all.filter(t=>!t.done&&!isOver(t)).length;
   const over    = all.filter(t=>isOver(t)).length;
   const pct     = total ? Math.round(done/total*100) : 0;
-
+ 
   const roles = ME.rol==='admin' ? ['pintura','tecnico','limpieza','encargado'] : ['pintura','tecnico','limpieza'];
   const byRole = roles.map(r => {
     const rt = all.filter(t=>t.rol===r);
     const rd = rt.filter(t=>t.done).length;
     return { r, total:rt.length, done:rd, pct: rt.length ? Math.round(rd/rt.length*100) : 0 };
   });
-
+ 
   const recientes = [...all].filter(t=>t.done).sort((a,b)=>new Date(b.done_at)-new Date(a.done_at)).slice(0,5);
-
+ 
   $('pageContent').innerHTML = `
     <div class="page-header">
       <div><h2>📊 Resumen general</h2><p>Progreso de todas las tareas</p></div>
@@ -198,9 +213,9 @@ async function renderResumen() {
         </div>`).join('') : '<div class="empty-state"><div class="empty-icon">🎯</div><p>Ninguna completada aún</p></div>'}
     </div>`;
 }
-
+ 
 // ═══════════════════════════════════════════
-//  EMPLEADOS (Solo Admin)
+//  EMPLEADOS
 // ═══════════════════════════════════════════
 async function renderEmpleados() {
   const lista = empleados.filter(e => e.id !== ME.id);
@@ -209,7 +224,6 @@ async function renderEmpleados() {
       <div><h2>👤 Empleados</h2><p>Gestiona tu equipo de trabajo</p></div>
       <button class="btn btn-primary" onclick="showFormEmpleado()">＋ Agregar empleado</button>
     </div>
-
     <div id="formEmpleado" class="card hidden">
       <div class="card-title">Nuevo empleado</div>
       <div class="form-row">
@@ -233,7 +247,6 @@ async function renderEmpleados() {
         <button class="btn" onclick="hideFormEmpleado()">Cancelar</button>
       </div>
     </div>
-
     <div class="card">
       <div class="card-title">Equipo registrado</div>
       ${lista.length === 0
@@ -252,45 +265,44 @@ async function renderEmpleados() {
       }
     </div>`;
 }
-
+ 
 function showFormEmpleado() { $('formEmpleado').classList.remove('hidden'); $('eNombre').focus(); }
 function hideFormEmpleado() { $('formEmpleado').classList.add('hidden'); }
-
+ 
 async function addEmpleado() {
   const nombre = $('eNombre').value.trim();
   const rol    = $('eRol').value;
   const email  = $('eEmail').value.trim();
   const pass   = $('ePass').value;
   const errEl  = $('empError');
-
+ 
   if (!nombre) { errEl.textContent = 'Escribe el nombre'; return; }
   if (!email)  { errEl.textContent = 'Escribe el correo'; return; }
   if (pass.length < 8) { errEl.textContent = 'La contraseña debe tener al menos 8 caracteres'; return; }
-
+ 
   errEl.textContent = 'Creando empleado...';
-
-  const { data, error } = await sb.auth.admin
-    ? await createUserAdmin(email, pass, nombre, rol)
-    : await createUserSignup(email, pass, nombre, rol);
-
-  if (error) { errEl.textContent = 'Error: ' + error.message; return; }
-
-  errEl.textContent = '';
-  await loadGlobal();
-  hideFormEmpleado();
-  await renderEmpleados();
-}
-
-async function createUserSignup(email, pass, nombre, rol) {
+ 
   const { data, error } = await sb.auth.signUp({
     email, password: pass,
     options: { data: { nombre, rol } }
   });
-  return { data, error };
+ 
+  if (error) { errEl.textContent = 'Error: ' + error.message; return; }
+ 
+  if (data.user) {
+    await sb.from('perfiles').upsert({
+      id: data.user.id,
+      nombre, email, rol, activo: true
+    });
+  }
+ 
+  errEl.textContent = '✓ Empleado creado correctamente';
+  await loadGlobal();
+  setTimeout(() => { hideFormEmpleado(); renderEmpleados(); }, 1500);
 }
-
+ 
 // ═══════════════════════════════════════════
-//  TAREAS (Admin / Encargado)
+//  TAREAS
 // ═══════════════════════════════════════════
 async function renderTareas() {
   const asignables = rolesAsignables();
@@ -298,23 +310,17 @@ async function renderTareas() {
   if (ME.rol === 'encargado') q = q.in('rol', asignables);
   const { data } = await q.order('creado_en', { ascending: false });
   const tareas = data || [];
-
+ 
   const empOpts = empleados
     .filter(e => asignables.includes(e.rol))
     .map(e => `<option value="${e.id}" data-rol="${e.rol}">${e.nombre} (${ROLES[e.rol].label})</option>`)
     .join('');
-
-  const predOpts = rol => tareasPredef
-    .filter(t => t.rol === rol)
-    .map(t => `<option value="${t.descripcion}">${t.descripcion}</option>`)
-    .join('');
-
+ 
   $('pageContent').innerHTML = `
     <div class="page-header">
       <div><h2>✅ Tareas</h2><p>${ME.rol==='admin'?'Todas las tareas':'Tareas de tu equipo'}</p></div>
       <button class="btn btn-primary" onclick="showFormTarea()">＋ Nueva tarea</button>
     </div>
-
     <div id="formTarea" class="card hidden">
       <div class="card-title">Nueva tarea</div>
       <div class="form-row">
@@ -333,31 +339,21 @@ async function renderTareas() {
         </div>
       </div>
       <div class="field">
-        <label>Descripción (puedes editarla o escribir una nueva)</label>
+        <label>Descripción (editable)</label>
         <input type="text" id="fDesc" placeholder="Descripción de la tarea" />
       </div>
       <div class="form-row">
-        <div class="field">
-          <label>Monto individual ($)</label>
-          <input type="number" id="fMonto" placeholder="0" />
-        </div>
-        <div class="field">
-          <label>Fecha límite</label>
-          <input type="date" id="fFecha" />
-        </div>
+        <div class="field"><label>Monto ($)</label><input type="number" id="fMonto" placeholder="0" /></div>
+        <div class="field"><label>Fecha límite</label><input type="date" id="fFecha" /></div>
       </div>
-      <div class="field">
-        <label>Notas (opcional)</label>
-        <input type="text" id="fNotas" placeholder="Materiales, instrucciones especiales..." />
-      </div>
-
+      <div class="field"><label>Notas (opcional)</label><input type="text" id="fNotas" placeholder="Materiales, instrucciones..." /></div>
       <div class="divider"></div>
-      <div class="card-title" style="font-size:13px">⚡ Asignación múltiple — selecciona varias tareas y un monto global</div>
+      <div class="card-title" style="font-size:13px">⚡ Selección múltiple con monto global</div>
       <div id="checklistContainer" style="display:none">
         <div id="checklist" class="checklist-grid"></div>
         <div class="form-row" style="margin-top:10px">
           <div class="field">
-            <label>Monto global (se divide entre las tareas seleccionadas)</label>
+            <label>Monto global (se divide entre tareas seleccionadas)</label>
             <input type="number" id="fMontoGlobal" placeholder="5000" oninput="calcMontoGlobal()" />
           </div>
           <div class="field" style="display:flex;align-items:flex-end">
@@ -365,7 +361,6 @@ async function renderTareas() {
           </div>
         </div>
       </div>
-
       <div id="fError" class="error-msg"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn btn-primary" onclick="addTarea()">Guardar tarea</button>
@@ -373,27 +368,27 @@ async function renderTareas() {
         <button class="btn" onclick="hideFormTarea()">Cancelar</button>
       </div>
     </div>
-
     <div class="card">
       <div class="card-title">Lista de tareas</div>
       ${tareas.length === 0
         ? '<div class="empty-state"><div class="empty-icon">📋</div><p>No hay tareas. Crea la primera.</p></div>'
-        : `<div class="task-list">${tareas.map(t => renderTaskItem(t, true, true)).join('')}</div>`
-      }
+        : `<div class="task-list">${tareas.map(t => renderTaskItem(t, true, true)).join('')}</div>`}
     </div>`;
 }
-
+ 
 function onEmpleadoChange(sel) {
   const opt = sel.options[sel.selectedIndex];
   const rol = opt.dataset.rol;
   const predSel = $('fPredefinida');
-  if (!rol) { predSel.innerHTML = '<option value="">— Selecciona primero un empleado —</option>'; $('checklistContainer').style.display='none'; return; }
+  if (!rol) {
+    predSel.innerHTML = '<option value="">— Selecciona primero un empleado —</option>';
+    $('checklistContainer').style.display = 'none';
+    return;
+  }
   const preds = tareasPredef.filter(t => t.rol === rol);
   predSel.innerHTML = `<option value="">— Selecciona tarea —</option>` +
     preds.map(t => `<option value="${t.descripcion}">${t.descripcion}</option>`).join('') +
     `<option value="custom">✏ Escribir tarea personalizada</option>`;
-
-  // Checklist para múltiple
   $('checklistContainer').style.display = 'block';
   $('checklist').innerHTML = preds.map(t => `
     <label class="check-item">
@@ -401,7 +396,7 @@ function onEmpleadoChange(sel) {
       <span>${t.descripcion}</span>
     </label>`).join('');
 }
-
+ 
 function onPredefinidaChange(sel) {
   if (sel.value && sel.value !== 'custom') {
     $('fDesc').value = sel.value;
@@ -410,22 +405,21 @@ function onPredefinidaChange(sel) {
     $('fDesc').focus();
   }
 }
-
+ 
 function calcMontoGlobal() {
   const global = Number($('fMontoGlobal').value) || 0;
   const checked = document.querySelectorAll('#checklist input:checked');
   const n = checked.length;
   if (global && n > 0) {
-    const por = Math.round(global / n);
-    $('montoCalc').textContent = `${fmtMoney(por)} por tarea (${n} seleccionadas)`;
+    $('montoCalc').textContent = `${fmtMoney(Math.round(global/n))} por tarea (${n} seleccionadas)`;
   } else {
     $('montoCalc').textContent = '';
   }
 }
-
+ 
 function showFormTarea() { $('formTarea').classList.remove('hidden'); }
-function hideFormTarea() { $('formTarea').classList.add('hidden'); }
-
+function hideFormTarea()  { $('formTarea').classList.add('hidden'); }
+ 
 async function addTarea() {
   const empId = $('fEmpleado').value;
   const desc  = $('fDesc').value.trim();
@@ -433,28 +427,24 @@ async function addTarea() {
   const fecha = $('fFecha').value;
   const notas = $('fNotas').value.trim();
   const errEl = $('fError');
-
+ 
   if (!empId) { errEl.textContent = 'Selecciona un empleado'; return; }
   if (!desc)  { errEl.textContent = 'Escribe una descripción'; return; }
   if (!monto || Number(monto) <= 0) { errEl.textContent = 'Ingresa un monto válido'; return; }
-
+ 
   const emp = empleados.find(e => e.id === empId);
   const { error } = await sb.from('tareas').insert({
-    descripcion: desc,
-    rol: emp.rol,
-    empleado_id: empId,
-    monto: Number(monto),
-    fecha_limite: fecha || null,
-    notas: notas || null,
-    asignado_por: ME.id,
+    descripcion: desc, rol: emp.rol, empleado_id: empId,
+    monto: Number(monto), fecha_limite: fecha || null,
+    notas: notas || null, asignado_por: ME.id,
   });
-
+ 
   if (error) { errEl.textContent = 'Error: ' + error.message; return; }
   errEl.textContent = '';
   hideFormTarea();
   await renderTareas();
 }
-
+ 
 async function addTareasMultiples() {
   const empId   = $('fEmpleado').value;
   const global  = Number($('fMontoGlobal').value) || 0;
@@ -462,43 +452,39 @@ async function addTareasMultiples() {
   const notas   = $('fNotas').value.trim();
   const errEl   = $('fError');
   const checked = [...document.querySelectorAll('#checklist input:checked')];
-
-  if (!empId) { errEl.textContent = 'Selecciona un empleado'; return; }
-  if (checked.length === 0) { errEl.textContent = 'Selecciona al menos una tarea'; return; }
-  if (!global) { errEl.textContent = 'Ingresa el monto global'; return; }
-
-  const emp    = empleados.find(e => e.id === empId);
-  const por    = Math.round(global / checked.length);
-  const rows   = checked.map(c => ({
-    descripcion: c.value,
-    rol: emp.rol,
-    empleado_id: empId,
-    monto: por,
-    fecha_limite: fecha || null,
-    notas: notas || null,
-    asignado_por: ME.id,
+ 
+  if (!empId)            { errEl.textContent = 'Selecciona un empleado'; return; }
+  if (checked.length===0){ errEl.textContent = 'Selecciona al menos una tarea'; return; }
+  if (!global)           { errEl.textContent = 'Ingresa el monto global'; return; }
+ 
+  const emp  = empleados.find(e => e.id === empId);
+  const por  = Math.round(global / checked.length);
+  const rows = checked.map(c => ({
+    descripcion: c.value, rol: emp.rol, empleado_id: empId,
+    monto: por, fecha_limite: fecha || null,
+    notas: notas || null, asignado_por: ME.id,
   }));
-
+ 
   const { error } = await sb.from('tareas').insert(rows);
   if (error) { errEl.textContent = 'Error: ' + error.message; return; }
   errEl.textContent = '';
   hideFormTarea();
   await renderTareas();
 }
-
+ 
 async function deleteTarea(id) {
   if (!confirm('¿Eliminar esta tarea?')) return;
   await sb.from('tareas').delete().eq('id', id);
   await goTo(currentPage);
 }
-
+ 
 async function toggleTarea(id) {
   const { data } = await sb.from('tareas').select('done').eq('id',id).single();
   const done = !data.done;
   await sb.from('tareas').update({ done, done_at: done ? new Date().toISOString() : null }).eq('id', id);
   await goTo(currentPage);
 }
-
+ 
 function renderTaskItem(t, canDelete=false, showRole=false) {
   const emp = t.empleado || empleados.find(e=>e.id===t.empleado_id);
   return `
@@ -521,20 +507,18 @@ function renderTaskItem(t, canDelete=false, showRole=false) {
       </div>
     </div>`;
 }
-
+ 
 // ═══════════════════════════════════════════
-//  MIS TAREAS (Trabajadores)
+//  MIS TAREAS
 // ═══════════════════════════════════════════
 async function renderMisTareas() {
   const { data } = await sb.from('tareas').select('*').eq('empleado_id', ME.id).order('creado_en', { ascending: false });
   const mis  = data || [];
   const done = mis.filter(t=>t.done).length;
   const pct  = mis.length ? Math.round(done/mis.length*100) : 0;
-
+ 
   $('pageContent').innerHTML = `
-    <div class="page-header">
-      <div><h2>✅ Mis tareas</h2><p>Solo tus tareas asignadas</p></div>
-    </div>
+    <div class="page-header"><div><h2>✅ Mis tareas</h2><p>Solo tus tareas asignadas</p></div></div>
     <div class="alert alert-info">🔒 Marca cada tarea cuando la completes.</div>
     <div class="stats-grid" style="grid-template-columns:repeat(3,1fr)">
       <div class="stat-card stat-cyan"><div class="stat-num">${mis.length}</div><div class="stat-lbl">Asignadas</div></div>
@@ -552,16 +536,16 @@ async function renderMisTareas() {
         : `<div class="task-list">${mis.map(t=>renderTaskItem(t,false,false)).join('')}</div>`}
     </div>`;
 }
-
+ 
 // ═══════════════════════════════════════════
-//  MIS PAGOS (Trabajadores)
+//  MIS PAGOS
 // ═══════════════════════════════════════════
 async function renderMisPagos() {
   const { data } = await sb.from('tareas').select('*').eq('empleado_id', ME.id);
   const mis      = data || [];
   const ganado   = mis.filter(t=>t.done).reduce((a,t)=>a+Number(t.monto),0);
   const porGanar = mis.filter(t=>!t.done).reduce((a,t)=>a+Number(t.monto),0);
-
+ 
   $('pageContent').innerHTML = `
     <div class="page-header"><div><h2>💰 Mis pagos</h2><p>Tu resumen de ganancias</p></div></div>
     <div class="stats-grid">
@@ -587,7 +571,7 @@ async function renderMisPagos() {
           </div>`).join('')}</div>`}
     </div>`;
 }
-
+ 
 // ═══════════════════════════════════════════
 //  EQUIPO Y PAGOS
 // ═══════════════════════════════════════════
@@ -595,15 +579,10 @@ async function renderEquipo() {
   const roles = ME.rol==='admin' ? ['encargado','pintura','tecnico','limpieza'] : ['pintura','tecnico','limpieza'];
   const { data: tareas } = await sb.from('tareas').select('*').in('rol', roles);
   const all = tareas || [];
-
   const workers = empleados.filter(e => roles.includes(e.rol));
-  const totalGanado = workers.reduce((a,w)=>{
-    return a + all.filter(t=>t.empleado_id===w.id&&t.done).reduce((s,t)=>s+Number(t.monto),0);
-  }, 0);
-  const totalPend = workers.reduce((a,w)=>{
-    return a + all.filter(t=>t.empleado_id===w.id&&!t.done).reduce((s,t)=>s+Number(t.monto),0);
-  }, 0);
-
+  const totalGanado = workers.reduce((a,w)=> a + all.filter(t=>t.empleado_id===w.id&&t.done).reduce((s,t)=>s+Number(t.monto),0), 0);
+  const totalPend   = workers.reduce((a,w)=> a + all.filter(t=>t.empleado_id===w.id&&!t.done).reduce((s,t)=>s+Number(t.monto),0), 0);
+ 
   $('pageContent').innerHTML = `
     <div class="page-header"><div><h2>👥 Equipo y pagos</h2><p>Progreso y ganancias por trabajador</p></div></div>
     <div class="stats-grid">
@@ -615,8 +594,8 @@ async function renderEquipo() {
       ? '<div class="card"><div class="empty-state"><div class="empty-icon">👥</div><p>No hay empleados registrados.</p></div></div>'
       : workers.map(w => {
           const rc = ROLES[w.rol];
-          const mis = all.filter(t=>t.empleado_id===w.id);
-          const done = mis.filter(t=>t.done).length;
+          const mis    = all.filter(t=>t.empleado_id===w.id);
+          const done   = mis.filter(t=>t.done).length;
           const ganado = mis.filter(t=>t.done).reduce((a,t)=>a+Number(t.monto),0);
           const porG   = mis.filter(t=>!t.done).reduce((a,t)=>a+Number(t.monto),0);
           const pct    = mis.length ? Math.round(done/mis.length*100) : 0;
@@ -640,14 +619,14 @@ async function renderEquipo() {
             </div>`;
         }).join('')}`;
 }
-
+ 
 // ═══════════════════════════════════════════
 //  COTIZACIÓN
 // ═══════════════════════════════════════════
 async function renderCotizacion() {
   const { data } = await sb.from('cotizaciones').select('*').order('creado_en',{ascending:false}).limit(1);
   const ultima = data?.[0] || null;
-
+ 
   $('pageContent').innerHTML = `
     <div class="page-header"><div><h2>📋 Cotización</h2><p>Genera la cotización de la propiedad</p></div></div>
     <div class="card">
@@ -696,7 +675,7 @@ async function renderCotizacion() {
         </div>
       </div>` : ''}`;
 }
-
+ 
 async function calcCotizacion() {
   const pintura   = Number($('cPintura').value)||0;
   const tecnico   = Number($('cTecnico').value)||0;
@@ -708,15 +687,15 @@ async function calcCotizacion() {
   const sub       = pintura+tecnico+limpieza+encargado+mat;
   const fee       = Math.round(sub*margen/100);
   const total     = sub+fee;
-
+ 
   await sb.from('cotizaciones').insert({
-    direccion:$('cDir').value, area:$('cArea').value||null,
-    habitaciones:$('cHab').value||null, banos:$('cBan').value||null, niveles:$('cNiv').value||null,
-    costo_pintura:pintura, costo_tecnico:tecnico, costo_limpieza:limpieza,
-    costo_encargado:encargado, materiales:mat, margen, subtotal:sub, admin_fee:fee, total,
+    direccion: dir, area: $('cArea').value||null,
+    habitaciones: $('cHab').value||null, banos: $('cBan').value||null, niveles: $('cNiv').value||null,
+    costo_pintura: pintura, costo_tecnico: tecnico, costo_limpieza: limpieza,
+    costo_encargado: encargado, materiales: mat, margen, subtotal: sub, admin_fee: fee, total,
     creado_por: ME.id,
   });
-
+ 
   $('cotResult').classList.remove('hidden');
   $('cotBody').innerHTML = `
     ${dir?`<div class="alert alert-info">📍 ${dir}</div>`:''}
