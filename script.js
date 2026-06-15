@@ -83,13 +83,20 @@ async function doLogin() {
   const email = $('loginEmail').value.trim();
   const pass  = $('loginPass').value;
   $('loginError').textContent = 'Entrando...';
- 
-  const { error } = await sb.auth.signInWithPassword({ email, password: pass });
+
+  const { data, error } = await sb.auth.signInWithPassword({ email, password: pass });
   if (error) {
     $('loginError').textContent = 'Correo o contraseña incorrectos.';
     return;
   }
-  $('loginError').textContent = '';
+  if (data.user) {
+    await loadMe(data.user.id);
+    await loadGlobal();
+    $('loginScreen').classList.add('hidden');
+    $('mainApp').classList.remove('hidden');
+    $('loginError').textContent = '';
+    initApp();
+  }
 }
  
 async function logout() {
