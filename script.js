@@ -10,19 +10,6 @@ const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsI
 let sb;
 window.addEventListener('load', function() {
   sb = window.supabase.createClient(SUPA_URL, SUPA_KEY);
- 
-  sb.auth.onAuthStateChange(async (event, session) => {
-    if (session) {
-      await loadMe(session.user.id);
-      await loadGlobal();
-      document.getElementById('loginScreen').classList.add('hidden');
-      document.getElementById('mainApp').classList.remove('hidden');
-      initApp();
-    } else {
-      document.getElementById('mainApp').classList.add('hidden');
-      document.getElementById('loginScreen').classList.remove('hidden');
-    }
-  });
 });
  
 // ── CONFIG ROLES ───────────────────────────
