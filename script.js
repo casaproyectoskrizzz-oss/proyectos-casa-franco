@@ -920,3 +920,11 @@ async function cambiarPassword() {
   msg.style.color='var(--green)'; msg.textContent='✓ Contraseña actualizada correctamente';
   $('pPass1').value=''; $('pPass2').value='';
 }
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('overlay').classList.toggle('open');
+}
+function closeSidebar() {
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('overlay').classList.remove('open');
+}
