@@ -117,7 +117,7 @@ function initApp() {
 }
  
 async function goTo(pageId) {
- closeSidebar();
+  closeSidebar();
   currentPage = pageId;
   document.querySelectorAll('.nav-item').forEach(el =>
     el.classList.toggle('active', el.dataset.page === pageId));
@@ -921,6 +921,8 @@ async function cambiarPassword() {
   msg.style.color='var(--green)'; msg.textContent='✓ Contraseña actualizada correctamente';
   $('pPass1').value=''; $('pPass2').value='';
 }
+ 
+// ── MOBILE SIDEBAR ─────────────────────────
 function toggleSidebar() {
   document.getElementById('sidebar').classList.toggle('open');
   document.getElementById('overlay').classList.toggle('open');
