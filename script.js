@@ -4,9 +4,8 @@
 
 const SUPA_URL = 'https://wiewpmkgsbsxgwljnhmu.supabase.co';
 const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndpZXdwbWtnc2JzeGd3bGpuaG11Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE1Mjk3MjUsImV4cCI6MjA5NzEwNTcyNX0.UxfZBpVwkWvGNsJpx3BnJxM9NHMF76-A3lYTIfIU8GM';
-let sb;
-document.addEventListener('DOMContentLoaded', () => {
-  sb = supabase.createClient(SUPA_URL, SUPA_KEY);
+const { createClient } = supabase;
+const sb = createClient(SUPA_URL, SUPA_KEY);
 });
 // ── CONFIG ROLES ───────────────────────────
 const ROLES = {
