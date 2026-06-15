@@ -25,9 +25,9 @@ const TIPOS = {
 };
  
 const NAV = {
-  admin:     [{ id:'resumen', icon:'📊', label:'Resumen' },{ id:'casas', icon:'🏠', label:'Casas' },{ id:'empleados', icon:'👤', label:'Empleados' },{ id:'tareas', icon:'✅', label:'Tareas' },{ id:'equipo', icon:'👥', label:'Equipo y pagos' },{ id:'cotizacion', icon:'📋', label:'Cotización' }],
-  encargado: [{ id:'resumen', icon:'📊', label:'Resumen' },{ id:'casas', icon:'🏠', label:'Casas' },{ id:'mis-tareas', icon:'✅', label:'Mis tareas' },{ id:'tareas', icon:'📝', label:'Tareas equipo' },{ id:'equipo', icon:'👥', label:'Equipo y pagos' }],
-  trabajador:[{ id:'mis-tareas', icon:'✅', label:'Mis tareas' },{ id:'mis-pagos', icon:'💰', label:'Mis pagos' }],
+  admin:     [{ id:'resumen', icon:'📊', label:'Resumen' },{ id:'casas', icon:'🏠', label:'Casas' },{ id:'empleados', icon:'👤', label:'Empleados' },{ id:'tareas', icon:'✅', label:'Tareas' },{ id:'equipo', icon:'👥', label:'Equipo y pagos' },{ id:'cotizacion', icon:'📋', label:'Cotización' },{ id:'mi-perfil', icon:'🔑', label:'Mi perfil' }],
+  encargado: [{ id:'resumen', icon:'📊', label:'Resumen' },{ id:'casas', icon:'🏠', label:'Casas' },{ id:'mis-tareas', icon:'✅', label:'Mis tareas' },{ id:'tareas', icon:'📝', label:'Tareas equipo' },{ id:'equipo', icon:'👥', label:'Equipo y pagos' },{ id:'mi-perfil', icon:'🔑', label:'Mi perfil' }],
+  trabajador:[{ id:'mis-tareas', icon:'✅', label:'Mis tareas' },{ id:'mis-pagos', icon:'💰', label:'Mis pagos' },{ id:'mi-perfil', icon:'🔑', label:'Mi perfil' }],
 };
  
 // ── ESTADO ─────────────────────────────────
@@ -130,6 +130,7 @@ async function goTo(pageId) {
     case 'mis-pagos':  await renderMisPagos(); break;
     case 'equipo':     await renderEquipo(); break;
     case 'cotizacion': await renderCotizacion(); break;
+    case 'mi-perfil':  await renderMiPerfil(); break;
   }
 }
  
@@ -298,9 +299,12 @@ async function verReporteCasa(casaId) {
   const pct  = all.length ? Math.round(done/all.length*100) : 0;
   const total = all.reduce((a,t)=>a+Number(t.monto),0);
   const ganado = all.filter(t=>t.done).reduce((a,t)=>a+Number(t.monto),0);
-
-  const workerIds = [...new Set(all.map(t=>t.empleado_id))];
-
+ 
+  const byTipo = Object.keys(TIPOS).map(tipo => {
+    const rt = all.filter(t=>t.tipo_trabajo===tipo);
+    return { tipo, tasks: rt };
+  }).filter(b => b.tasks.length > 0);
+ 
   $('pageContent').innerHTML = `
     <div class="page-header">
       <div><h2>📄 ${casa.nombre}</h2><p>📍 ${casa.direccion}</p></div>
@@ -321,50 +325,39 @@ async function verReporteCasa(casaId) {
       <div class="progress-label"><span>Progreso general</span><span>${pct}%</span></div>
       <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
     </div>
-    ${all.length===0
-      ? '<div class="card"><div class="empty-state"><div class="empty-icon">📋</div><p>No hay tareas en esta propiedad.</p></div></div>'
-      : workerIds.map(empId => {
-          const emp   = empleados.find(e=>e.id===empId);
-          const wt    = all.filter(t=>t.empleado_id===empId);
-          const wd    = wt.filter(t=>t.done).length;
-          const wp    = wt.length ? Math.round(wd/wt.length*100) : 0;
-          const wm    = wt.reduce((a,t)=>a+Number(t.monto),0);
-          const wg    = wt.filter(t=>t.done).reduce((a,t)=>a+Number(t.monto),0);
-          const rc    = ROLES[emp?.rol]||ROLES.trabajador;
-          const tipos = [...new Set(wt.map(t=>t.tipo_trabajo).filter(Boolean))];
-          return `
-            <div class="card">
-              <div class="worker-row" style="border:none;padding:0 0 12px">
-                <div class="worker-avatar" style="background:${rc.avatarBg};color:${rc.avatarColor}">${initials(emp?.nombre||'?')}</div>
-                <div class="worker-info">
-                  <div class="worker-name">${emp?.nombre||'—'}</div>
-                  <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">${tipos.map(t=>tipoBadge(t)).join('')}</div>
-                  <div style="font-size:11px;color:var(--text3);margin-top:4px">${wd}/${wt.length} tareas · ${wp}%</div>
-                  <div class="progress-bar" style="margin-top:6px"><div class="progress-fill" style="width:${wp}%"></div></div>
+    ${byTipo.map(b => {
+      const rd = b.tasks.filter(t=>t.done).length;
+      const rp = b.tasks.length ? Math.round(rd/b.tasks.length*100) : 0;
+      const rm = b.tasks.reduce((a,t)=>a+Number(t.monto),0);
+      return `
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+            <div class="card-title" style="margin:0">${tipoBadge(b.tipo)}</div>
+            <span style="font-size:13px;color:var(--green);font-weight:600">${fmtMoney(rm)}</span>
+          </div>
+          <div class="progress-label"><span>${rd}/${b.tasks.length} tareas</span><span>${rp}%</span></div>
+          <div class="progress-bar" style="margin-bottom:10px"><div class="progress-fill" style="width:${rp}%"></div></div>
+          <div class="task-list">
+            ${b.tasks.map(t=>`
+              <div class="task-item ${t.done?'done':''}">
+                <div class="task-check ${t.done?'checked':''}" onclick="toggleTareaReporte(${t.id},${casaId})">${t.done?'✓':''}</div>
+                <div class="task-body">
+                  <div class="task-name ${t.done?'done':''}">${t.descripcion}</div>
+                  <div class="task-meta">
+                    <span style="font-size:11px;color:var(--text2)">👤 ${empName(t.empleado_id)}</span>
+                    <span class="task-amount">${fmtMoney(t.monto)}</span>
+                    ${taskBadge(t)}
+                    ${t.fecha_limite?`<span class="task-date">📅 ${fmtDate(t.fecha_limite)}</span>`:''}
+                    ${t.done&&t.done_at?`<span class="task-done-at">· ${fmtDT(t.done_at)}</span>`:''}
+                  </div>
+                  ${t.notas?`<div style="font-size:11px;color:var(--text3);margin-top:3px">📌 ${t.notas}</div>`:''}
                 </div>
-                <div class="worker-amount">${fmtMoney(wg)}<small>de ${fmtMoney(wm)}</small></div>
-              </div>
-              <hr class="divider" style="margin:0 0 10px">
-              <div class="task-list">
-                ${wt.map(t=>`
-                  <div class="task-item ${t.done?'done':''}">
-                    <div class="task-check ${t.done?'checked':''}" onclick="toggleTareaReporte(${t.id},${casaId})">${t.done?'✓':''}</div>
-                    <div class="task-body">
-                      <div class="task-name ${t.done?'done':''}">${t.descripcion}</div>
-                      <div class="task-meta">
-                        ${tipoBadge(t.tipo_trabajo)}
-                        <span class="task-amount">${fmtMoney(t.monto)}</span>
-                        ${taskBadge(t)}
-                        ${t.fecha_limite?`<span class="task-date">📅 ${fmtDate(t.fecha_limite)}</span>`:''}
-                        ${t.done&&t.done_at?`<span class="task-done-at">· ${fmtDT(t.done_at)}</span>`:''}
-                      </div>
-                      ${t.notas?`<div style="font-size:11px;color:var(--text3);margin-top:3px">📌 ${t.notas}</div>`:''}
-                    </div>
-                    ${ME.rol==='admin'?`<button class="btn btn-sm btn-danger" onclick="deleteTareaReporte(${t.id},${casaId})">🗑</button>`:''}
-                  </div>`).join('')}
-              </div>
-            </div>`;
-        }).join('')}`;
+                ${ME.rol==='admin'?`<button class="btn btn-sm btn-danger" onclick="deleteTareaReporte(${t.id},${casaId})">🗑</button>`:''}
+              </div>`).join('')}
+          </div>
+        </div>`;
+    }).join('')}
+    ${all.length===0?'<div class="card"><div class="empty-state"><div class="empty-icon">📋</div><p>No hay tareas en esta propiedad.</p></div></div>':''}`;
 }
  
 async function toggleTareaReporte(id, casaId) {
@@ -886,4 +879,44 @@ async function calcCotizacion() {
       <div class="cot-row total"><span>TOTAL</span><span>${fmtMoney(total)}</span></div>
     </div>
     <p style="font-size:11px;color:var(--text3);margin-top:8px">Generado: ${new Date().toLocaleDateString('es-MX',{day:'2-digit',month:'long',year:'numeric'})}</p>`;
+}
+ 
+// ═══════════════════════════════════════════
+//  MI PERFIL
+// ═══════════════════════════════════════════
+async function renderMiPerfil() {
+  $('pageContent').innerHTML = `
+    <div class="page-header">
+      <div><h2>🔑 Mi perfil</h2><p>Actualiza tu contraseña</p></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Información</div>
+      <div class="worker-row" style="border:none;padding:0">
+        <div class="worker-avatar" style="background:${ROLES[ME.rol]?.avatarBg};color:${ROLES[ME.rol]?.avatarColor};width:48px;height:48px;font-size:16px">${initials(ME.nombre)}</div>
+        <div class="worker-info">
+          <div class="worker-name">${ME.nombre}</div>
+          <div class="worker-stats">${rolBadge(ME.rol)} · ${ME.email}</div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Cambiar contraseña</div>
+      <div class="field"><label>Nueva contraseña</label><input type="password" id="pPass1" placeholder="Mínimo 8 caracteres" /></div>
+      <div class="field"><label>Confirmar contraseña</label><input type="password" id="pPass2" placeholder="Repite la contraseña" /></div>
+      <div id="perfilMsg" class="error-msg"></div>
+      <button class="btn btn-primary" style="margin-top:8px" onclick="cambiarPassword()">Actualizar contraseña</button>
+    </div>`;
+}
+ 
+async function cambiarPassword() {
+  const p1  = $('pPass1').value;
+  const p2  = $('pPass2').value;
+  const msg = $('perfilMsg');
+  if (p1.length < 8) { msg.style.color='var(--red)'; msg.textContent='Mínimo 8 caracteres'; return; }
+  if (p1 !== p2)     { msg.style.color='var(--red)'; msg.textContent='Las contraseñas no coinciden'; return; }
+  msg.style.color='var(--text2)'; msg.textContent='Actualizando...';
+  const { error } = await sb.auth.updateUser({ password: p1 });
+  if (error) { msg.style.color='var(--red)'; msg.textContent='Error: '+error.message; return; }
+  msg.style.color='var(--green)'; msg.textContent='✓ Contraseña actualizada correctamente';
+  $('pPass1').value=''; $('pPass2').value='';
 }
