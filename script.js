@@ -1,12 +1,10 @@
 // ═══════════════════════════════════════════
-//  CASA MANAGER — script.js
+//  CASA MANAGER — script.js v2
 // ═══════════════════════════════════════════
  
-// ── SUPABASE ───────────────────────────────
 const SUPA_URL = 'https://wiewpmkgsbsxgwljnhmu.supabase.co';
 const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndpZXdwbWtnc2JzeGd3bGpuaG11Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE1Mjk3MjUsImV4cCI6MjA5NzEwNTcyNX0.UxfZBpVwkWvGNsJpx3BnJxM9NHMF76-A3lYTIfIU8GM';
  
-// Esperar a que el DOM y Supabase estén listos
 let sb;
 window.addEventListener('load', function() {
   sb = window.supabase.createClient(SUPA_URL, SUPA_KEY);
@@ -22,8 +20,8 @@ const ROLES = {
 };
  
 const NAV = {
-  admin:     [{ id:'resumen', icon:'📊', label:'Resumen' },{ id:'empleados', icon:'👤', label:'Empleados' },{ id:'tareas', icon:'✅', label:'Tareas' },{ id:'equipo', icon:'👥', label:'Equipo y pagos' },{ id:'cotizacion', icon:'📋', label:'Cotización' }],
-  encargado: [{ id:'resumen', icon:'📊', label:'Resumen' },{ id:'mis-tareas', icon:'✅', label:'Mis tareas' },{ id:'tareas', icon:'📝', label:'Tareas equipo' },{ id:'equipo', icon:'👥', label:'Equipo y pagos' }],
+  admin:     [{ id:'resumen', icon:'📊', label:'Resumen' },{ id:'casas', icon:'🏠', label:'Casas' },{ id:'empleados', icon:'👤', label:'Empleados' },{ id:'tareas', icon:'✅', label:'Tareas' },{ id:'equipo', icon:'👥', label:'Equipo y pagos' },{ id:'cotizacion', icon:'📋', label:'Cotización' }],
+  encargado: [{ id:'resumen', icon:'📊', label:'Resumen' },{ id:'casas', icon:'🏠', label:'Casas' },{ id:'mis-tareas', icon:'✅', label:'Mis tareas' },{ id:'tareas', icon:'📝', label:'Tareas equipo' },{ id:'equipo', icon:'👥', label:'Equipo y pagos' }],
   pintura:   [{ id:'mis-tareas', icon:'✅', label:'Mis tareas' },{ id:'mis-pagos', icon:'💰', label:'Mis pagos' }],
   tecnico:   [{ id:'mis-tareas', icon:'✅', label:'Mis tareas' },{ id:'mis-pagos', icon:'💰', label:'Mis pagos' }],
   limpieza:  [{ id:'mis-tareas', icon:'✅', label:'Mis tareas' },{ id:'mis-pagos', icon:'💰', label:'Mis pagos' }],
@@ -34,6 +32,7 @@ let ME = null;
 let currentPage = null;
 let tareasPredef = [];
 let empleados = [];
+let casas = [];
  
 // ── HELPERS ────────────────────────────────
 function $(id) { return document.getElementById(id); }
@@ -43,9 +42,7 @@ const fmtDT    = iso => iso ? new Date(iso).toLocaleDateString('es-MX',{day:'2-d
 const isOver   = t => !t.done && t.fecha_limite && new Date(t.fecha_limite) < new Date();
 const initials = n => n ? n.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase() : '??';
  
-function rolBadge(rol) {
-  return `<span class="badge badge-${rol}">${ROLES[rol]?.label||rol}</span>`;
-}
+function rolBadge(rol) { return `<span class="badge badge-${rol}">${ROLES[rol]?.label||rol}</span>`; }
 function taskBadge(t) {
   if (t.done) return '<span class="badge badge-completa">✓ Completa</span>';
   if (isOver(t)) return '<span class="badge badge-vencida">⚠ Vencida</span>';
@@ -55,6 +52,14 @@ function rolesAsignables() {
   if (ME.rol === 'admin') return ['encargado','pintura','tecnico','limpieza'];
   if (ME.rol === 'encargado') return ['pintura','tecnico','limpieza'];
   return [];
+}
+function empName(id) {
+  const e = empleados.find(e => e.id === id);
+  return e ? e.nombre : '—';
+}
+function casaNombre(id) {
+  const c = casas.find(c => c.id === id);
+  return c ? c.nombre : '—';
 }
  
 // ═══════════════════════════════════════════
@@ -70,19 +75,13 @@ async function doLogin() {
   const email = $('loginEmail').value.trim();
   const pass  = $('loginPass').value;
   $('loginError').textContent = 'Entrando...';
-
+ 
   const { data, error } = await sb.auth.signInWithPassword({ email, password: pass });
-  if (error) {
-    $('loginError').textContent = 'Correo o contraseña incorrectos.';
-    return;
-  }
+  if (error) { $('loginError').textContent = 'Correo o contraseña incorrectos.'; return; }
+ 
   if (data.user) {
-    const { data: perfil, error: perfilError } = await sb.from('perfiles').select('*').eq('id', data.user.id).single();
-    console.log('PERFIL:', perfil, 'ERROR:', perfilError);
-    if (!perfil) {
-      $('loginError').textContent = 'Error: perfil no encontrado. ID: ' + data.user.id;
-      return;
-    }
+    const { data: perfil } = await sb.from('perfiles').select('*').eq('id', data.user.id).single();
+    if (!perfil) { $('loginError').textContent = 'Perfil no encontrado.'; return; }
     ME = perfil;
     await loadGlobal();
     $('loginScreen').classList.add('hidden');
@@ -101,18 +100,15 @@ async function logout() {
   $('loginPass').value = '';
 }
  
-async function loadMe(uid) {
-  const { data } = await sb.from('perfiles').select('*').eq('id', uid).single();
-  ME = data;
-}
- 
 async function loadGlobal() {
-  const [{ data: tp }, { data: emp }] = await Promise.all([
+  const [{ data: tp }, { data: emp }, { data: cs }] = await Promise.all([
     sb.from('tareas_predefinidas').select('*').order('rol').order('orden'),
     sb.from('perfiles').select('*').order('nombre'),
+    sb.from('casas').select('*').order('creado_en', { ascending: false }),
   ]);
   tareasPredef = tp || [];
   empleados    = emp || [];
+  casas        = cs || [];
 }
  
 // ═══════════════════════════════════════════
@@ -126,25 +122,21 @@ function initApp() {
   av.style.color = rc.avatarColor;
   $('sidebarName').textContent = ME.nombre;
   $('sidebarRoleBadge').innerHTML = `<span class="badge ${rc.badge}">${rc.label}</span>`;
- 
-  const nav = $('sidebarNav');
-  nav.innerHTML = NAV[ME.rol].map(n =>
+  $('sidebarNav').innerHTML = NAV[ME.rol].map(n =>
     `<div class="nav-item" data-page="${n.id}" onclick="goTo('${n.id}')">
       <span class="nav-icon">${n.icon}</span><span>${n.label}</span>
-    </div>`
-  ).join('');
- 
+    </div>`).join('');
   goTo(NAV[ME.rol][0].id);
 }
  
 async function goTo(pageId) {
   currentPage = pageId;
   document.querySelectorAll('.nav-item').forEach(el =>
-    el.classList.toggle('active', el.dataset.page === pageId)
-  );
+    el.classList.toggle('active', el.dataset.page === pageId));
   $('pageContent').innerHTML = '<div class="loading">Cargando...</div>';
   switch(pageId) {
     case 'resumen':    await renderResumen(); break;
+    case 'casas':      await renderCasas(); break;
     case 'empleados':  await renderEmpleados(); break;
     case 'tareas':     await renderTareas(); break;
     case 'mis-tareas': await renderMisTareas(); break;
@@ -158,35 +150,36 @@ async function goTo(pageId) {
 //  RESUMEN
 // ═══════════════════════════════════════════
 async function renderResumen() {
-  let q = sb.from('tareas').select('*');
-  if (ME.rol === 'encargado') q = q.in('rol',['pintura','tecnico','limpieza','encargado']);
-  const { data: tareas } = await q;
+  const { data: tareas } = await sb.from('tareas').select('*');
   const all = tareas || [];
- 
   const total   = all.length;
   const done    = all.filter(t=>t.done).length;
   const pending = all.filter(t=>!t.done&&!isOver(t)).length;
   const over    = all.filter(t=>isOver(t)).length;
   const pct     = total ? Math.round(done/total*100) : 0;
  
-  const roles = ME.rol==='admin' ? ['pintura','tecnico','limpieza','encargado'] : ['pintura','tecnico','limpieza'];
+  const roles = ['pintura','tecnico','limpieza','encargado'];
   const byRole = roles.map(r => {
     const rt = all.filter(t=>t.rol===r);
     const rd = rt.filter(t=>t.done).length;
     return { r, total:rt.length, done:rd, pct: rt.length ? Math.round(rd/rt.length*100) : 0 };
   });
  
-  const recientes = [...all].filter(t=>t.done).sort((a,b)=>new Date(b.done_at)-new Date(a.done_at)).slice(0,5);
+  const recientes = [...all].filter(t=>t.done)
+    .sort((a,b)=>new Date(b.done_at)-new Date(a.done_at)).slice(0,5);
  
   $('pageContent').innerHTML = `
-    <div class="page-header">
-      <div><h2>📊 Resumen general</h2><p>Progreso de todas las tareas</p></div>
-    </div>
+    <div class="page-header"><div><h2>📊 Resumen general</h2><p>Progreso de todas las tareas</p></div></div>
     <div class="stats-grid">
       <div class="stat-card stat-cyan"><div class="stat-num">${total}</div><div class="stat-lbl">Total tareas</div></div>
       <div class="stat-card stat-green"><div class="stat-num">${done}</div><div class="stat-lbl">Completadas</div></div>
       <div class="stat-card stat-amber"><div class="stat-num">${pending}</div><div class="stat-lbl">Pendientes</div></div>
       <div class="stat-card stat-red"><div class="stat-num">${over}</div><div class="stat-lbl">Vencidas</div></div>
+    </div>
+    <div class="stats-grid" style="grid-template-columns:repeat(3,1fr)">
+      <div class="stat-card stat-purple"><div class="stat-num">${casas.length}</div><div class="stat-lbl">Casas activas</div></div>
+      <div class="stat-card"><div class="stat-num" style="color:var(--text)">${empleados.filter(e=>e.rol!=='admin').length}</div><div class="stat-lbl">Empleados</div></div>
+      <div class="stat-card stat-cyan"><div class="stat-num">${pct}%</div><div class="stat-lbl">Progreso global</div></div>
     </div>
     <div class="card">
       <div class="card-title">Progreso general</div>
@@ -199,7 +192,7 @@ async function renderResumen() {
         <div style="margin-bottom:12px">
           <div class="progress-label"><span>${rolBadge(b.r)}</span><span>${b.done}/${b.total} · ${b.pct}%</span></div>
           <div class="progress-bar"><div class="progress-fill" style="width:${b.pct}%"></div></div>
-        </div>`).join('')||'<div class="empty-state"><p>Sin tareas aún</p></div>'}
+        </div>`).join('')}
     </div>
     <div class="card">
       <div class="card-title">✅ Últimas completadas</div>
@@ -208,10 +201,182 @@ async function renderResumen() {
           <div class="task-check checked">✓</div>
           <div class="task-body">
             <div class="task-name done">${t.descripcion}</div>
-            <div class="task-meta">${rolBadge(t.rol)}<span class="task-amount">${fmtMoney(t.monto)}</span><span class="task-done-at">· ${fmtDT(t.done_at)}</span></div>
+            <div class="task-meta">
+              ${rolBadge(t.rol)}
+              <span style="font-size:11px;color:var(--text2)">👤 ${empName(t.empleado_id)}</span>
+              ${t.casa_id ? `<span style="font-size:11px;color:var(--text2)">🏠 ${casaNombre(t.casa_id)}</span>` : ''}
+              <span class="task-amount">${fmtMoney(t.monto)}</span>
+              <span class="task-done-at">· ${fmtDT(t.done_at)}</span>
+            </div>
           </div>
         </div>`).join('') : '<div class="empty-state"><div class="empty-icon">🎯</div><p>Ninguna completada aún</p></div>'}
     </div>`;
+}
+ 
+// ═══════════════════════════════════════════
+//  CASAS
+// ═══════════════════════════════════════════
+async function renderCasas() {
+  await loadGlobal();
+  const { data: tareas } = await sb.from('tareas').select('*');
+  const all = tareas || [];
+ 
+  $('pageContent').innerHTML = `
+    <div class="page-header">
+      <div><h2>🏠 Casas / Propiedades</h2><p>Gestiona las propiedades y su progreso</p></div>
+      ${['admin','encargado'].includes(ME.rol) ? `<button class="btn btn-primary" onclick="showFormCasa()">＋ Nueva casa</button>` : ''}
+    </div>
+ 
+    <div id="formCasa" class="card hidden">
+      <div class="card-title">Nueva propiedad</div>
+      <div class="form-row">
+        <div class="field"><label>Nombre de la propiedad</label><input type="text" id="cNombre" placeholder="Casa Familia García" /></div>
+        <div class="field"><label>Dirección</label><input type="text" id="cDireccion" placeholder="Calle 5 #234, Colonia Centro" /></div>
+      </div>
+      <div class="field"><label>Descripción (opcional)</label><input type="text" id="cDescripcion" placeholder="Casa de 2 niveles, 3 habitaciones..." /></div>
+      <div id="casaError" class="error-msg"></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-primary" onclick="addCasa()">Guardar propiedad</button>
+        <button class="btn" onclick="hideFormCasa()">Cancelar</button>
+      </div>
+    </div>
+ 
+    ${casas.length === 0
+      ? '<div class="card"><div class="empty-state"><div class="empty-icon">🏠</div><p>No hay propiedades. Agrega la primera.</p></div></div>'
+      : casas.map(casa => {
+          const ct = all.filter(t => t.casa_id === casa.id);
+          const cd = ct.filter(t => t.done).length;
+          const pct = ct.length ? Math.round(cd/ct.length*100) : 0;
+          const total = ct.reduce((a,t)=>a+Number(t.monto),0);
+          const ganado = ct.filter(t=>t.done).reduce((a,t)=>a+Number(t.monto),0);
+          return `
+            <div class="card">
+              <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+                <div>
+                  <div style="font-size:16px;font-weight:600;color:var(--cyan)">🏠 ${casa.nombre}</div>
+                  <div style="font-size:12px;color:var(--text2);margin-top:3px">📍 ${casa.direccion}</div>
+                  ${casa.descripcion ? `<div style="font-size:12px;color:var(--text3);margin-top:2px">${casa.descripcion}</div>` : ''}
+                </div>
+                <div style="display:flex;gap:8px;flex-shrink:0">
+                  <button class="btn btn-sm btn-primary" onclick="goToTareasCasa(${casa.id})">＋ Asignar tarea</button>
+                  <button class="btn btn-sm" onclick="verReporteCasa(${casa.id})">📄 Ver reporte</button>
+                  ${ME.rol==='admin' ? `<button class="btn btn-sm btn-danger" onclick="deleteCasa(${casa.id})">🗑</button>` : ''}
+                </div>
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0">
+                <div class="stat-card"><div class="stat-num" style="font-size:18px">${ct.length}</div><div class="stat-lbl">Tareas</div></div>
+                <div class="stat-card stat-green"><div class="stat-num" style="font-size:18px">${cd}</div><div class="stat-lbl">Listas</div></div>
+                <div class="stat-card stat-cyan"><div class="stat-num" style="font-size:16px">${fmtMoney(ganado)}</div><div class="stat-lbl">Pagado</div></div>
+                <div class="stat-card stat-amber"><div class="stat-num" style="font-size:16px">${fmtMoney(total-ganado)}</div><div class="stat-lbl">Pendiente</div></div>
+              </div>
+              <div class="progress-label"><span>Progreso</span><span>${pct}%</span></div>
+              <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
+            </div>`;
+        }).join('')}`;
+}
+ 
+function showFormCasa() { $('formCasa').classList.remove('hidden'); $('cNombre').focus(); }
+function hideFormCasa()  { $('formCasa').classList.add('hidden'); }
+ 
+async function addCasa() {
+  const nombre     = $('cNombre').value.trim();
+  const direccion  = $('cDireccion').value.trim();
+  const descripcion= $('cDescripcion').value.trim();
+  if (!nombre)    { $('casaError').textContent = 'Escribe el nombre'; return; }
+  if (!direccion) { $('casaError').textContent = 'Escribe la dirección'; return; }
+  const { error } = await sb.from('casas').insert({ nombre, direccion, descripcion: descripcion||null, creado_por: ME.id });
+  if (error) { $('casaError').textContent = 'Error: ' + error.message; return; }
+  await loadGlobal();
+  hideFormCasa();
+  await renderCasas();
+}
+ 
+async function deleteCasa(id) {
+  if (!confirm('¿Eliminar esta propiedad? Las tareas quedarán sin casa asignada.')) return;
+  await sb.from('casas').delete().eq('id', id);
+  await loadGlobal();
+  await renderCasas();
+}
+ 
+function goToTareasCasa(casaId) {
+  currentPage = 'tareas';
+  document.querySelectorAll('.nav-item').forEach(el =>
+    el.classList.toggle('active', el.dataset.page === 'tareas'));
+  renderTareas(casaId);
+}
+ 
+async function verReporteCasa(casaId) {
+  const casa = casas.find(c => c.id === casaId);
+  const { data: tareas } = await sb.from('tareas').select('*').eq('casa_id', casaId);
+  const all = tareas || [];
+  const done = all.filter(t=>t.done).length;
+  const pct  = all.length ? Math.round(done/all.length*100) : 0;
+  const total = all.reduce((a,t)=>a+Number(t.monto),0);
+  const ganado = all.filter(t=>t.done).reduce((a,t)=>a+Number(t.monto),0);
+ 
+  const roles = ['pintura','tecnico','limpieza','encargado'];
+ 
+  $('pageContent').innerHTML = `
+    <div class="page-header">
+      <div>
+        <h2>📄 Reporte — ${casa.nombre}</h2>
+        <p>📍 ${casa.direccion}</p>
+      </div>
+      <button class="btn" onclick="goTo('casas')">← Volver</button>
+    </div>
+ 
+    <div class="stats-grid">
+      <div class="stat-card stat-cyan"><div class="stat-num">${all.length}</div><div class="stat-lbl">Total tareas</div></div>
+      <div class="stat-card stat-green"><div class="stat-num">${done}</div><div class="stat-lbl">Completadas</div></div>
+      <div class="stat-card stat-amber"><div class="stat-num">${all.length-done}</div><div class="stat-lbl">Pendientes</div></div>
+      <div class="stat-card stat-purple"><div class="stat-num">${pct}%</div><div class="stat-lbl">Progreso</div></div>
+    </div>
+ 
+    <div class="stats-grid">
+      <div class="stat-card stat-green"><div class="stat-num">${fmtMoney(ganado)}</div><div class="stat-lbl">Pagado</div></div>
+      <div class="stat-card stat-amber"><div class="stat-num">${fmtMoney(total-ganado)}</div><div class="stat-lbl">Por pagar</div></div>
+      <div class="stat-card stat-cyan"><div class="stat-num">${fmtMoney(total)}</div><div class="stat-lbl">Total</div></div>
+    </div>
+ 
+    <div class="card">
+      <div class="progress-label"><span>Progreso general</span><span>${pct}%</span></div>
+      <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
+    </div>
+ 
+    ${roles.map(r => {
+      const rt = all.filter(t=>t.rol===r);
+      if (!rt.length) return '';
+      const rd = rt.filter(t=>t.done).length;
+      const rp = rt.length ? Math.round(rd/rt.length*100) : 0;
+      const rm = rt.reduce((a,t)=>a+Number(t.monto),0);
+      return `
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+            <div class="card-title" style="margin:0">${rolBadge(r)}</div>
+            <span style="font-size:13px;color:var(--green);font-weight:600">${fmtMoney(rm)}</span>
+          </div>
+          <div class="progress-label"><span>${rd}/${rt.length} tareas</span><span>${rp}%</span></div>
+          <div class="progress-bar" style="margin-bottom:10px"><div class="progress-fill" style="width:${rp}%"></div></div>
+          <div class="task-list">
+            ${rt.map(t => `
+              <div class="task-item ${t.done?'done':''}">
+                <div class="task-check ${t.done?'checked':''}" onclick="toggleTarea(${t.id})">${t.done?'✓':''}</div>
+                <div class="task-body">
+                  <div class="task-name ${t.done?'done':''}">${t.descripcion}</div>
+                  <div class="task-meta">
+                    <span style="font-size:11px;color:var(--text2)">👤 ${empName(t.empleado_id)}</span>
+                    <span class="task-amount">${fmtMoney(t.monto)}</span>
+                    ${taskBadge(t)}
+                    ${t.fecha_limite ? `<span class="task-date">📅 ${fmtDate(t.fecha_limite)}</span>` : ''}
+                    ${t.done && t.done_at ? `<span class="task-done-at">· ${fmtDT(t.done_at)}</span>` : ''}
+                  </div>
+                  ${t.notas ? `<div style="font-size:11px;color:var(--text3);margin-top:3px">📌 ${t.notas}</div>` : ''}
+                </div>
+                ${ME.rol==='admin' ? `<button class="btn btn-sm btn-danger" onclick="deleteTarea(${t.id})">🗑</button>` : ''}
+              </div>`).join('')}
+          </div>
+        </div>`;
+    }).join('')}`;
 }
  
 // ═══════════════════════════════════════════
@@ -221,7 +386,7 @@ async function renderEmpleados() {
   const lista = empleados.filter(e => e.id !== ME.id);
   $('pageContent').innerHTML = `
     <div class="page-header">
-      <div><h2>👤 Empleados</h2><p>Gestiona tu equipo de trabajo</p></div>
+      <div><h2>👤 Empleados</h2><p>Gestiona tu equipo</p></div>
       <button class="btn btn-primary" onclick="showFormEmpleado()">＋ Agregar empleado</button>
     </div>
     <div id="formEmpleado" class="card hidden">
@@ -238,31 +403,31 @@ async function renderEmpleados() {
         </div>
       </div>
       <div class="form-row">
-        <div class="field"><label>Correo electrónico</label><input type="email" id="eEmail" placeholder="empleado@email.com" /></div>
-        <div class="field"><label>Contraseña temporal</label><input type="password" id="ePass" placeholder="Mínimo 8 caracteres" /></div>
+        <div class="field"><label>Correo</label><input type="email" id="eEmail" placeholder="empleado@email.com" /></div>
+        <div class="field"><label>Contraseña</label><input type="password" id="ePass" placeholder="Mínimo 8 caracteres" /></div>
       </div>
       <div id="empError" class="error-msg"></div>
       <div style="display:flex;gap:8px">
-        <button class="btn btn-primary" onclick="addEmpleado()">Guardar empleado</button>
+        <button class="btn btn-primary" onclick="addEmpleado()">Guardar</button>
         <button class="btn" onclick="hideFormEmpleado()">Cancelar</button>
       </div>
     </div>
     <div class="card">
-      <div class="card-title">Equipo registrado</div>
+      <div class="card-title">Equipo registrado (${lista.length})</div>
       ${lista.length === 0
-        ? '<div class="empty-state"><div class="empty-icon">👥</div><p>No hay empleados. Agrega el primero.</p></div>'
+        ? '<div class="empty-state"><div class="empty-icon">👥</div><p>No hay empleados aún.</p></div>'
         : lista.map(e => {
             const rc = ROLES[e.rol];
+            const mis = 0;
             return `<div class="worker-row">
               <div class="worker-avatar" style="background:${rc.avatarBg};color:${rc.avatarColor}">${initials(e.nombre)}</div>
               <div class="worker-info">
                 <div class="worker-name">${e.nombre}</div>
                 <div class="worker-stats">${rolBadge(e.rol)} · ${e.email}</div>
               </div>
-              <span class="badge ${e.activo ? 'badge-completa' : 'badge-vencida'}">${e.activo ? 'Activo' : 'Inactivo'}</span>
+              <span class="badge ${e.activo ? 'badge-completa':'badge-vencida'}">${e.activo?'Activo':'Inactivo'}</span>
             </div>`;
-          }).join('')
-      }
+          }).join('')}
     </div>`;
 }
  
@@ -275,28 +440,16 @@ async function addEmpleado() {
   const email  = $('eEmail').value.trim();
   const pass   = $('ePass').value;
   const errEl  = $('empError');
- 
   if (!nombre) { errEl.textContent = 'Escribe el nombre'; return; }
   if (!email)  { errEl.textContent = 'Escribe el correo'; return; }
-  if (pass.length < 8) { errEl.textContent = 'La contraseña debe tener al menos 8 caracteres'; return; }
- 
-  errEl.textContent = 'Creando empleado...';
- 
-  const { data, error } = await sb.auth.signUp({
-    email, password: pass,
-    options: { data: { nombre, rol } }
-  });
- 
+  if (pass.length < 8) { errEl.textContent = 'Mínimo 8 caracteres'; return; }
+  errEl.textContent = 'Creando...';
+  const { data, error } = await sb.auth.signUp({ email, password: pass, options: { data: { nombre, rol } } });
   if (error) { errEl.textContent = 'Error: ' + error.message; return; }
- 
   if (data.user) {
-    await sb.from('perfiles').upsert({
-      id: data.user.id,
-      nombre, email, rol, activo: true
-    });
+    await sb.from('perfiles').upsert({ id: data.user.id, nombre, email, rol, activo: true });
   }
- 
-  errEl.textContent = '✓ Empleado creado correctamente';
+  errEl.textContent = '✓ Empleado creado';
   await loadGlobal();
   setTimeout(() => { hideFormEmpleado(); renderEmpleados(); }, 1500);
 }
@@ -304,26 +457,32 @@ async function addEmpleado() {
 // ═══════════════════════════════════════════
 //  TAREAS
 // ═══════════════════════════════════════════
-async function renderTareas() {
+async function renderTareas(preselectCasaId = null) {
   const asignables = rolesAsignables();
-  let q = sb.from('tareas').select('*, empleado:perfiles!tareas_empleado_id_fkey(nombre,rol)');
-  if (ME.rol === 'encargado') q = q.in('rol', asignables);
-  const { data } = await q.order('creado_en', { ascending: false });
+  const { data } = await sb.from('tareas').select('*').order('creado_en', { ascending: false });
   const tareas = data || [];
  
-  const empOpts = empleados
-    .filter(e => asignables.includes(e.rol))
-    .map(e => `<option value="${e.id}" data-rol="${e.rol}">${e.nombre} (${ROLES[e.rol].label})</option>`)
-    .join('');
+  const empOpts = empleados.filter(e => asignables.includes(e.rol))
+    .map(e => `<option value="${e.id}" data-rol="${e.rol}">${e.nombre} — ${ROLES[e.rol].label}</option>`).join('');
+ 
+  const casaOpts = casas.map(c => `<option value="${c.id}" ${preselectCasaId===c.id?'selected':''}>${c.nombre} — ${c.direccion}</option>`).join('');
  
   $('pageContent').innerHTML = `
     <div class="page-header">
-      <div><h2>✅ Tareas</h2><p>${ME.rol==='admin'?'Todas las tareas':'Tareas de tu equipo'}</p></div>
+      <div><h2>✅ Tareas</h2><p>Todas las tareas asignadas</p></div>
       <button class="btn btn-primary" onclick="showFormTarea()">＋ Nueva tarea</button>
     </div>
-    <div id="formTarea" class="card hidden">
+ 
+    <div id="formTarea" class="card ${preselectCasaId ? '' : 'hidden'}">
       <div class="card-title">Nueva tarea</div>
       <div class="form-row">
+        <div class="field">
+          <label>Propiedad</label>
+          <select id="fCasa">
+            <option value="">— Sin propiedad —</option>
+            ${casaOpts}
+          </select>
+        </div>
         <div class="field">
           <label>Empleado</label>
           <select id="fEmpleado" onchange="onEmpleadoChange(this)">
@@ -331,12 +490,12 @@ async function renderTareas() {
             ${empOpts}
           </select>
         </div>
-        <div class="field">
-          <label>Tarea predefinida</label>
-          <select id="fPredefinida" onchange="onPredefinidaChange(this)">
-            <option value="">— Selecciona primero un empleado —</option>
-          </select>
-        </div>
+      </div>
+      <div class="field">
+        <label>Tarea predefinida</label>
+        <select id="fPredefinida" onchange="onPredefinidaChange(this)">
+          <option value="">— Selecciona primero un empleado —</option>
+        </select>
       </div>
       <div class="field">
         <label>Descripción (editable)</label>
@@ -346,14 +505,14 @@ async function renderTareas() {
         <div class="field"><label>Monto ($)</label><input type="number" id="fMonto" placeholder="0" /></div>
         <div class="field"><label>Fecha límite</label><input type="date" id="fFecha" /></div>
       </div>
-      <div class="field"><label>Notas (opcional)</label><input type="text" id="fNotas" placeholder="Materiales, instrucciones..." /></div>
-      <div class="divider"></div>
+      <div class="field"><label>Notas</label><input type="text" id="fNotas" placeholder="Materiales, instrucciones..." /></div>
+      <hr class="divider">
       <div class="card-title" style="font-size:13px">⚡ Selección múltiple con monto global</div>
       <div id="checklistContainer" style="display:none">
         <div id="checklist" class="checklist-grid"></div>
         <div class="form-row" style="margin-top:10px">
           <div class="field">
-            <label>Monto global (se divide entre tareas seleccionadas)</label>
+            <label>Monto global (se divide entre tareas)</label>
             <input type="number" id="fMontoGlobal" placeholder="5000" oninput="calcMontoGlobal()" />
           </div>
           <div class="field" style="display:flex;align-items:flex-end">
@@ -368,27 +527,23 @@ async function renderTareas() {
         <button class="btn" onclick="hideFormTarea()">Cancelar</button>
       </div>
     </div>
+ 
     <div class="card">
-      <div class="card-title">Lista de tareas</div>
+      <div class="card-title">Lista de tareas (${tareas.length})</div>
       ${tareas.length === 0
-        ? '<div class="empty-state"><div class="empty-icon">📋</div><p>No hay tareas. Crea la primera.</p></div>'
+        ? '<div class="empty-state"><div class="empty-icon">📋</div><p>No hay tareas aún.</p></div>'
         : `<div class="task-list">${tareas.map(t => renderTaskItem(t, true, true)).join('')}</div>`}
     </div>`;
 }
  
 function onEmpleadoChange(sel) {
-  const opt = sel.options[sel.selectedIndex];
-  const rol = opt.dataset.rol;
+  const rol = sel.options[sel.selectedIndex]?.dataset.rol;
   const predSel = $('fPredefinida');
-  if (!rol) {
-    predSel.innerHTML = '<option value="">— Selecciona primero un empleado —</option>';
-    $('checklistContainer').style.display = 'none';
-    return;
-  }
+  if (!rol) { predSel.innerHTML = '<option value="">— Selecciona primero un empleado —</option>'; $('checklistContainer').style.display='none'; return; }
   const preds = tareasPredef.filter(t => t.rol === rol);
   predSel.innerHTML = `<option value="">— Selecciona tarea —</option>` +
     preds.map(t => `<option value="${t.descripcion}">${t.descripcion}</option>`).join('') +
-    `<option value="custom">✏ Escribir tarea personalizada</option>`;
+    `<option value="custom">✏ Tarea personalizada</option>`;
   $('checklistContainer').style.display = 'block';
   $('checklist').innerHTML = preds.map(t => `
     <label class="check-item">
@@ -398,75 +553,64 @@ function onEmpleadoChange(sel) {
 }
  
 function onPredefinidaChange(sel) {
-  if (sel.value && sel.value !== 'custom') {
-    $('fDesc').value = sel.value;
-  } else if (sel.value === 'custom') {
-    $('fDesc').value = '';
-    $('fDesc').focus();
-  }
+  if (sel.value && sel.value !== 'custom') $('fDesc').value = sel.value;
+  else if (sel.value === 'custom') { $('fDesc').value = ''; $('fDesc').focus(); }
 }
  
 function calcMontoGlobal() {
-  const global = Number($('fMontoGlobal').value) || 0;
-  const checked = document.querySelectorAll('#checklist input:checked');
-  const n = checked.length;
-  if (global && n > 0) {
-    $('montoCalc').textContent = `${fmtMoney(Math.round(global/n))} por tarea (${n} seleccionadas)`;
-  } else {
-    $('montoCalc').textContent = '';
-  }
+  const g = Number($('fMontoGlobal').value)||0;
+  const n = document.querySelectorAll('#checklist input:checked').length;
+  $('montoCalc').textContent = g&&n ? `${fmtMoney(Math.round(g/n))} por tarea (${n} sel.)` : '';
 }
  
 function showFormTarea() { $('formTarea').classList.remove('hidden'); }
 function hideFormTarea()  { $('formTarea').classList.add('hidden'); }
  
 async function addTarea() {
-  const empId = $('fEmpleado').value;
-  const desc  = $('fDesc').value.trim();
-  const monto = $('fMonto').value;
-  const fecha = $('fFecha').value;
-  const notas = $('fNotas').value.trim();
-  const errEl = $('fError');
- 
+  const casaId = $('fCasa').value || null;
+  const empId  = $('fEmpleado').value;
+  const desc   = $('fDesc').value.trim();
+  const monto  = $('fMonto').value;
+  const fecha  = $('fFecha').value;
+  const notas  = $('fNotas').value.trim();
+  const errEl  = $('fError');
   if (!empId) { errEl.textContent = 'Selecciona un empleado'; return; }
   if (!desc)  { errEl.textContent = 'Escribe una descripción'; return; }
-  if (!monto || Number(monto) <= 0) { errEl.textContent = 'Ingresa un monto válido'; return; }
- 
+  if (!monto || Number(monto)<=0) { errEl.textContent = 'Ingresa un monto válido'; return; }
   const emp = empleados.find(e => e.id === empId);
   const { error } = await sb.from('tareas').insert({
     descripcion: desc, rol: emp.rol, empleado_id: empId,
-    monto: Number(monto), fecha_limite: fecha || null,
-    notas: notas || null, asignado_por: ME.id,
+    monto: Number(monto), fecha_limite: fecha||null,
+    notas: notas||null, asignado_por: ME.id,
+    casa_id: casaId ? Number(casaId) : null,
   });
- 
-  if (error) { errEl.textContent = 'Error: ' + error.message; return; }
+  if (error) { errEl.textContent = 'Error: '+error.message; return; }
   errEl.textContent = '';
   hideFormTarea();
   await renderTareas();
 }
  
 async function addTareasMultiples() {
+  const casaId  = $('fCasa').value || null;
   const empId   = $('fEmpleado').value;
-  const global  = Number($('fMontoGlobal').value) || 0;
+  const global  = Number($('fMontoGlobal').value)||0;
   const fecha   = $('fFecha').value;
   const notas   = $('fNotas').value.trim();
   const errEl   = $('fError');
   const checked = [...document.querySelectorAll('#checklist input:checked')];
- 
-  if (!empId)            { errEl.textContent = 'Selecciona un empleado'; return; }
-  if (checked.length===0){ errEl.textContent = 'Selecciona al menos una tarea'; return; }
-  if (!global)           { errEl.textContent = 'Ingresa el monto global'; return; }
- 
-  const emp  = empleados.find(e => e.id === empId);
-  const por  = Math.round(global / checked.length);
+  if (!empId)           { errEl.textContent = 'Selecciona un empleado'; return; }
+  if (!checked.length)  { errEl.textContent = 'Selecciona al menos una tarea'; return; }
+  if (!global)          { errEl.textContent = 'Ingresa el monto global'; return; }
+  const emp = empleados.find(e => e.id === empId);
+  const por = Math.round(global/checked.length);
   const rows = checked.map(c => ({
     descripcion: c.value, rol: emp.rol, empleado_id: empId,
-    monto: por, fecha_limite: fecha || null,
-    notas: notas || null, asignado_por: ME.id,
+    monto: por, fecha_limite: fecha||null,
+    notas: notas||null, asignado_por: ME.id,
+    casa_id: casaId ? Number(casaId) : null,
   }));
- 
   const { error } = await sb.from('tareas').insert(rows);
-  if (error) { errEl.textContent = 'Error: ' + error.message; return; }
+  if (error) { errEl.textContent = 'Error: '+error.message; return; }
   errEl.textContent = '';
   hideFormTarea();
   await renderTareas();
@@ -486,7 +630,7 @@ async function toggleTarea(id) {
 }
  
 function renderTaskItem(t, canDelete=false, showRole=false) {
-  const emp = t.empleado || empleados.find(e=>e.id===t.empleado_id);
+  const casa = t.casa_id ? casas.find(c=>c.id===t.casa_id) : null;
   return `
     <div class="task-item ${t.done?'done':''}">
       <div class="task-check ${t.done?'checked':''}" onclick="toggleTarea(${t.id})">${t.done?'✓':''}</div>
@@ -494,16 +638,17 @@ function renderTaskItem(t, canDelete=false, showRole=false) {
         <div class="task-name ${t.done?'done':''}">${t.descripcion}</div>
         <div class="task-meta">
           ${showRole ? rolBadge(t.rol) : ''}
-          ${emp ? `<span style="font-size:11px;color:var(--text2)">👤 ${emp.nombre||emp}</span>` : ''}
+          <span style="font-size:11px;color:var(--text2)">👤 ${empName(t.empleado_id)}</span>
+          ${casa ? `<span style="font-size:11px;color:var(--cyan)">🏠 ${casa.nombre}</span>` : ''}
           <span class="task-amount">${fmtMoney(t.monto)}</span>
           ${taskBadge(t)}
           ${t.fecha_limite ? `<span class="task-date">📅 ${fmtDate(t.fecha_limite)}</span>` : ''}
-          ${t.done && t.done_at ? `<span class="task-done-at">· ${fmtDT(t.done_at)}</span>` : ''}
+          ${t.done&&t.done_at ? `<span class="task-done-at">· ${fmtDT(t.done_at)}</span>` : ''}
         </div>
         ${t.notas ? `<div style="font-size:11px;color:var(--text3);margin-top:3px">📌 ${t.notas}</div>` : ''}
       </div>
       <div class="task-actions">
-        ${canDelete && ME.rol==='admin' ? `<button class="btn btn-sm btn-danger" onclick="deleteTarea(${t.id})">🗑</button>` : ''}
+        ${canDelete&&ME.rol==='admin' ? `<button class="btn btn-sm btn-danger" onclick="deleteTarea(${t.id})">🗑</button>` : ''}
       </div>
     </div>`;
 }
@@ -512,13 +657,21 @@ function renderTaskItem(t, canDelete=false, showRole=false) {
 //  MIS TAREAS
 // ═══════════════════════════════════════════
 async function renderMisTareas() {
-  const { data } = await sb.from('tareas').select('*').eq('empleado_id', ME.id).order('creado_en', { ascending: false });
+  const { data } = await sb.from('tareas').select('*').eq('empleado_id', ME.id).order('creado_en',{ascending:false});
   const mis  = data || [];
   const done = mis.filter(t=>t.done).length;
   const pct  = mis.length ? Math.round(done/mis.length*100) : 0;
  
+  // Agrupar por casa
+  const porCasa = {};
+  mis.forEach(t => {
+    const key = t.casa_id || 'sin-casa';
+    if (!porCasa[key]) porCasa[key] = [];
+    porCasa[key].push(t);
+  });
+ 
   $('pageContent').innerHTML = `
-    <div class="page-header"><div><h2>✅ Mis tareas</h2><p>Solo tus tareas asignadas</p></div></div>
+    <div class="page-header"><div><h2>✅ Mis tareas</h2><p>Tareas asignadas a ti</p></div></div>
     <div class="alert alert-info">🔒 Marca cada tarea cuando la completes.</div>
     <div class="stats-grid" style="grid-template-columns:repeat(3,1fr)">
       <div class="stat-card stat-cyan"><div class="stat-num">${mis.length}</div><div class="stat-lbl">Asignadas</div></div>
@@ -529,12 +682,16 @@ async function renderMisTareas() {
       <div class="progress-label"><span>Tu progreso</span><span>${pct}%</span></div>
       <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
     </div>
-    <div class="card">
-      <div class="card-title">Mis tareas</div>
-      ${mis.length === 0
-        ? '<div class="empty-state"><div class="empty-icon">🎯</div><p>No tienes tareas asignadas aún.</p></div>'
-        : `<div class="task-list">${mis.map(t=>renderTaskItem(t,false,false)).join('')}</div>`}
-    </div>`;
+    ${mis.length === 0
+      ? '<div class="card"><div class="empty-state"><div class="empty-icon">🎯</div><p>No tienes tareas aún.</p></div></div>'
+      : Object.entries(porCasa).map(([key, ts]) => {
+          const casa = key !== 'sin-casa' ? casas.find(c=>c.id===Number(key)) : null;
+          return `
+            <div class="card">
+              <div class="card-title">${casa ? `🏠 ${casa.nombre} — ${casa.direccion}` : '📋 Sin propiedad asignada'}</div>
+              <div class="task-list">${ts.map(t=>renderTaskItem(t,false,false)).join('')}</div>
+            </div>`;
+        }).join('')}`;
 }
  
 // ═══════════════════════════════════════════
@@ -551,18 +708,19 @@ async function renderMisPagos() {
     <div class="stats-grid">
       <div class="stat-card stat-green"><div class="stat-num">${fmtMoney(ganado)}</div><div class="stat-lbl">Ganado</div></div>
       <div class="stat-card stat-amber"><div class="stat-num">${fmtMoney(porGanar)}</div><div class="stat-lbl">Por ganar</div></div>
-      <div class="stat-card stat-cyan"><div class="stat-num">${fmtMoney(ganado+porGanar)}</div><div class="stat-lbl">Total asignado</div></div>
+      <div class="stat-card stat-cyan"><div class="stat-num">${fmtMoney(ganado+porGanar)}</div><div class="stat-lbl">Total</div></div>
     </div>
     <div class="card">
-      <div class="card-title">Detalle</div>
+      <div class="card-title">Detalle por tarea</div>
       ${mis.length === 0
-        ? '<div class="empty-state"><div class="empty-icon">💸</div><p>Sin tareas asignadas aún.</p></div>'
+        ? '<div class="empty-state"><div class="empty-icon">💸</div><p>Sin tareas aún.</p></div>'
         : `<div class="task-list">${mis.map(t=>`
           <div class="task-item ${t.done?'done':''}">
             <div class="task-check ${t.done?'checked':''}" style="cursor:default">${t.done?'✓':''}</div>
             <div class="task-body">
               <div class="task-name ${t.done?'done':''}">${t.descripcion}</div>
               <div class="task-meta">
+                ${t.casa_id ? `<span style="font-size:11px;color:var(--cyan)">🏠 ${casaNombre(t.casa_id)}</span>` : ''}
                 <span class="task-amount">${fmtMoney(t.monto)}</span>
                 ${taskBadge(t)}
                 ${t.done&&t.done_at?`<span class="task-done-at">· ${fmtDT(t.done_at)}</span>`:''}
@@ -577,11 +735,11 @@ async function renderMisPagos() {
 // ═══════════════════════════════════════════
 async function renderEquipo() {
   const roles = ME.rol==='admin' ? ['encargado','pintura','tecnico','limpieza'] : ['pintura','tecnico','limpieza'];
-  const { data: tareas } = await sb.from('tareas').select('*').in('rol', roles);
+  const { data: tareas } = await sb.from('tareas').select('*');
   const all = tareas || [];
   const workers = empleados.filter(e => roles.includes(e.rol));
-  const totalGanado = workers.reduce((a,w)=> a + all.filter(t=>t.empleado_id===w.id&&t.done).reduce((s,t)=>s+Number(t.monto),0), 0);
-  const totalPend   = workers.reduce((a,w)=> a + all.filter(t=>t.empleado_id===w.id&&!t.done).reduce((s,t)=>s+Number(t.monto),0), 0);
+  const totalGanado = workers.reduce((a,w)=>a+all.filter(t=>t.empleado_id===w.id&&t.done).reduce((s,t)=>s+Number(t.monto),0),0);
+  const totalPend   = workers.reduce((a,w)=>a+all.filter(t=>t.empleado_id===w.id&&!t.done).reduce((s,t)=>s+Number(t.monto),0),0);
  
   $('pageContent').innerHTML = `
     <div class="page-header"><div><h2>👥 Equipo y pagos</h2><p>Progreso y ganancias por trabajador</p></div></div>
@@ -591,7 +749,7 @@ async function renderEquipo() {
       <div class="stat-card stat-cyan"><div class="stat-num">${fmtMoney(totalGanado+totalPend)}</div><div class="stat-lbl">Total asignado</div></div>
     </div>
     ${workers.length === 0
-      ? '<div class="card"><div class="empty-state"><div class="empty-icon">👥</div><p>No hay empleados registrados.</p></div></div>'
+      ? '<div class="card"><div class="empty-state"><div class="empty-icon">👥</div><p>No hay empleados.</p></div></div>'
       : workers.map(w => {
           const rc = ROLES[w.rol];
           const mis    = all.filter(t=>t.empleado_id===w.id);
@@ -614,7 +772,7 @@ async function renderEquipo() {
               <div class="task-list">
                 ${mis.length===0
                   ? '<div class="empty-state" style="padding:.75rem"><p>Sin tareas</p></div>'
-                  : mis.map(t=>renderTaskItem(t, ME.rol==='admin', false)).join('')}
+                  : mis.map(t=>renderTaskItem(t,ME.rol==='admin',false)).join('')}
               </div>
             </div>`;
         }).join('')}`;
@@ -624,25 +782,27 @@ async function renderEquipo() {
 //  COTIZACIÓN
 // ═══════════════════════════════════════════
 async function renderCotizacion() {
-  const { data } = await sb.from('cotizaciones').select('*').order('creado_en',{ascending:false}).limit(1);
-  const ultima = data?.[0] || null;
+  const { data } = await sb.from('cotizaciones').select('*').order('creado_en',{ascending:false}).limit(5);
+  const lista = data || [];
  
   $('pageContent').innerHTML = `
-    <div class="page-header"><div><h2>📋 Cotización</h2><p>Genera la cotización de la propiedad</p></div></div>
+    <div class="page-header"><div><h2>📋 Cotización</h2><p>Genera cotizaciones por propiedad</p></div></div>
     <div class="card">
-      <div class="card-title">Datos de la propiedad</div>
+      <div class="card-title">Nueva cotización</div>
       <div class="form-row">
-        <div class="field"><label>Dirección</label><input type="text" id="cDir" placeholder="Calle 5 #234" /></div>
-        <div class="field"><label>Área (m²)</label><input type="number" id="cArea" placeholder="120" /></div>
+        <div class="field"><label>Propiedad</label>
+          <select id="cCasaId">
+            <option value="">— Sin propiedad —</option>
+            ${casas.map(c=>`<option value="${c.id}">${c.nombre} — ${c.direccion}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field"><label>Dirección (si no hay propiedad)</label><input type="text" id="cDir" placeholder="Calle 5 #234" /></div>
       </div>
       <div class="form-row-3">
         <div class="field"><label>Habitaciones</label><input type="number" id="cHab" placeholder="3" /></div>
         <div class="field"><label>Baños</label><input type="number" id="cBan" placeholder="2" /></div>
-        <div class="field"><label>Niveles</label><input type="number" id="cNiv" placeholder="1" /></div>
+        <div class="field"><label>Área (m²)</label><input type="number" id="cArea" placeholder="120" /></div>
       </div>
-    </div>
-    <div class="card">
-      <div class="card-title">Costos por área</div>
       <div class="form-row">
         <div class="field"><label>Pintura ($)</label><input type="number" id="cPintura" placeholder="5000" /></div>
         <div class="field"><label>Técnico ($)</label><input type="number" id="cTecnico" placeholder="3000" /></div>
@@ -661,36 +821,37 @@ async function renderCotizacion() {
       <div class="card-title">📄 Resultado</div>
       <div id="cotBody"></div>
     </div>
-    ${ultima ? `
+    ${lista.length ? `
       <div class="card">
-        <div class="card-title">🕐 Última cotización — ${new Date(ultima.creado_en).toLocaleDateString('es-MX')}</div>
-        <div class="cot-result">
-          <div class="cot-row"><span>Pintura</span><span class="cot-val">${fmtMoney(ultima.costo_pintura)}</span></div>
-          <div class="cot-row"><span>Técnico</span><span class="cot-val">${fmtMoney(ultima.costo_tecnico)}</span></div>
-          <div class="cot-row"><span>Limpieza</span><span class="cot-val">${fmtMoney(ultima.costo_limpieza)}</span></div>
-          <div class="cot-row"><span>Encargado</span><span class="cot-val">${fmtMoney(ultima.costo_encargado)}</span></div>
-          <div class="cot-row"><span>Materiales</span><span class="cot-val">${fmtMoney(ultima.materiales)}</span></div>
-          <div class="cot-row"><span>Margen (${ultima.margen}%)</span><span class="cot-val">${fmtMoney(ultima.admin_fee)}</span></div>
-          <div class="cot-row total"><span>TOTAL</span><span>${fmtMoney(ultima.total)}</span></div>
-        </div>
+        <div class="card-title">🕐 Cotizaciones anteriores</div>
+        ${lista.map(c=>`
+          <div class="cot-row" style="flex-direction:column;align-items:flex-start;gap:4px">
+            <div style="display:flex;justify-content:space-between;width:100%">
+              <span style="font-weight:600;color:var(--cyan)">${c.direccion||'Sin dirección'}</span>
+              <span style="font-weight:700;color:var(--cyan)">${fmtMoney(c.total)}</span>
+            </div>
+            <span style="font-size:11px;color:var(--text3)">${new Date(c.creado_en).toLocaleDateString('es-MX',{day:'2-digit',month:'long',year:'numeric'})}</span>
+          </div>`).join('')}
       </div>` : ''}`;
 }
  
 async function calcCotizacion() {
+  const casaId    = $('cCasaId').value;
+  const casa      = casaId ? casas.find(c=>c.id===Number(casaId)) : null;
   const pintura   = Number($('cPintura').value)||0;
   const tecnico   = Number($('cTecnico').value)||0;
   const limpieza  = Number($('cLimpieza').value)||0;
   const encargado = Number($('cEncargado').value)||0;
   const mat       = Number($('cMat').value)||0;
   const margen    = Number($('cMargen').value)||20;
-  const dir       = $('cDir').value;
+  const dir       = casa ? `${casa.nombre} — ${casa.direccion}` : $('cDir').value;
   const sub       = pintura+tecnico+limpieza+encargado+mat;
   const fee       = Math.round(sub*margen/100);
   const total     = sub+fee;
  
   await sb.from('cotizaciones').insert({
     direccion: dir, area: $('cArea').value||null,
-    habitaciones: $('cHab').value||null, banos: $('cBan').value||null, niveles: $('cNiv').value||null,
+    habitaciones: $('cHab').value||null, banos: $('cBan').value||null,
     costo_pintura: pintura, costo_tecnico: tecnico, costo_limpieza: limpieza,
     costo_encargado: encargado, materiales: mat, margen, subtotal: sub, admin_fee: fee, total,
     creado_por: ME.id,
@@ -706,7 +867,8 @@ async function calcCotizacion() {
       <div class="cot-row"><span>${rolBadge('encargado')} Encargado</span><span class="cot-val">${fmtMoney(encargado)}</span></div>
       <div class="cot-row"><span>🔩 Materiales</span><span class="cot-val">${fmtMoney(mat)}</span></div>
       <div class="cot-row"><span>Subtotal</span><span class="cot-val">${fmtMoney(sub)}</span></div>
-      <div class="cot-row"><span>Margen admin (${margen}%)</span><span class="cot-val">${fmtMoney(fee)}</span></div>
+      <div class="cot-row"><span>Margen (${margen}%)</span><span class="cot-val">${fmtMoney(fee)}</span></div>
       <div class="cot-row total"><span>TOTAL</span><span>${fmtMoney(total)}</span></div>
-    </div>`;
+    </div>
+    <p style="font-size:11px;color:var(--text3);margin-top:8px">Generado: ${new Date().toLocaleDateString('es-MX',{day:'2-digit',month:'long',year:'numeric'})}</p>`;
 }
