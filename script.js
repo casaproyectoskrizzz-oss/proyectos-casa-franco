@@ -90,7 +90,13 @@ async function doLogin() {
     return;
   }
   if (data.user) {
-    await loadMe(data.user.id);
+    const { data: perfil, error: perfilError } = await sb.from('perfiles').select('*').eq('id', data.user.id).single();
+    console.log('PERFIL:', perfil, 'ERROR:', perfilError);
+    if (!perfil) {
+      $('loginError').textContent = 'Error: perfil no encontrado. ID: ' + data.user.id;
+      return;
+    }
+    ME = perfil;
     await loadGlobal();
     $('loginScreen').classList.add('hidden');
     $('mainApp').classList.remove('hidden');
