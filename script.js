@@ -1,16 +1,77 @@
 // ═══════════════════════════════════════════
-//  CASA MANAGER — script.js v3 (multi-rol)
+//  CASA MANAGER — script.js v4 (con notificaciones)
 // ═══════════════════════════════════════════
  
 const SUPA_URL = 'https://wiewpmkgsbsxgwljnhmu.supabase.co';
 const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndpZXdwbWtnc2JzeGd3bGpuaG11Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE1Mjk3MjUsImV4cCI6MjA5NzEwNTcyNX0.UxfZBpVwkWvGNsJpx3BnJxM9NHMF76-A3lYTIfIU8GM';
+const OS_APP_ID = '4ed3441f-9cee-4358-8f8b-4f48e20077af';
+const OS_API_KEY = 'os_v2_app_j3juih445zbvrd4lj5eoeadxv6lp5ajbmb6emyvdzyznrxwy56qhhvxgsmzipdysi77gruhmdc3vu4ylbphyfsr7ycp7ypixh4t3ady';
  
 let sb;
 window.addEventListener('load', function() {
   sb = window.supabase.createClient(SUPA_URL, SUPA_KEY);
+  initOneSignal();
 });
  
-// ── CONFIG ─────────────────────────────────
+// ── ONESIGNAL ──────────────────────────────
+async function initOneSignal() {
+  try {
+    await window.OneSignalDeferred?.push(async function(os) {
+      await os.init({
+        appId: OS_APP_ID,
+        notifyButton: { enable: false },
+        allowLocalhostAsSecureOrigin: true,
+      });
+      await os.Notifications.requestPermission();
+      const osId = await os.User.PushSubscription.id;
+      if (osId && ME) {
+        await sb.from('push_tokens').upsert({
+          empleado_id: ME.id,
+          onesignal_id: osId,
+        }, { onConflict: 'empleado_id,onesignal_id' });
+      }
+    });
+  } catch(e) { console.log('OneSignal:', e); }
+}
+ 
+async function saveOSToken() {
+  try {
+    await window.OneSignalDeferred?.push(async function(os) {
+      const osId = await os.User.PushSubscription.id;
+      if (osId && ME) {
+        await sb.from('push_tokens').upsert({
+          empleado_id: ME.id,
+          onesignal_id: osId,
+        }, { onConflict: 'empleado_id,onesignal_id' });
+      }
+    });
+  } catch(e) {}
+}
+ 
+async function sendNotification(empleadoId, titulo, mensaje) {
+  try {
+    const { data: tokens } = await sb.from('push_tokens')
+      .select('onesignal_id').eq('empleado_id', empleadoId);
+    if (!tokens || tokens.length === 0) return;
+    const ids = tokens.map(t => t.onesignal_id);
+    await fetch('https://api.onesignal.com/notifications', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Key ${OS_API_KEY}`,
+      },
+      body: JSON.stringify({
+        app_id: OS_APP_ID,
+        include_subscription_ids: ids,
+        headings: { en: titulo },
+        contents: { en: mensaje },
+        small_icon: 'house',
+      }),
+    });
+  } catch(e) { console.log('Notif error:', e); }
+}
+ 
+// ── CONFIG ROLES ───────────────────────────
 const ROLES = {
   admin:      { label: 'Administrador',     badge: 'badge-admin',    avatarBg: '#7c3cff22', avatarColor: '#7c3cff' },
   encargado:  { label: 'Encargado',         badge: 'badge-encargado',avatarBg: '#00ffe722', avatarColor: '#00ffe7' },
@@ -36,6 +97,7 @@ let currentPage = null;
 let tareasPredef = [];
 let empleados = [];
 let casas = [];
+let materiales = []; // lista de materiales de la cotización actual: {nombre, precio, cantidad}
  
 // ── HELPERS ────────────────────────────────
 function $(id) { return document.getElementById(id); }
@@ -75,6 +137,7 @@ async function doLogin() {
     $('mainApp').classList.remove('hidden');
     $('loginError').textContent = '';
     initApp();
+    saveOSToken();
   }
 }
  
@@ -133,6 +196,16 @@ async function goTo(pageId) {
     case 'cotizacion': await renderCotizacion(); break;
     case 'mi-perfil':  await renderMiPerfil(); break;
   }
+}
+ 
+// ── MOBILE SIDEBAR ─────────────────────────
+function toggleSidebar() {
+  $('sidebar').classList.toggle('open');
+  $('overlay').classList.toggle('open');
+}
+function closeSidebar() {
+  $('sidebar').classList.remove('open');
+  $('overlay').classList.remove('open');
 }
  
 // ═══════════════════════════════════════════
@@ -219,9 +292,9 @@ async function renderCasas() {
       <div class="card-title">Nueva propiedad</div>
       <div class="form-row">
         <div class="field"><label>Nombre</label><input type="text" id="cNombre" placeholder="Casa Familia García" /></div>
-        <div class="field"><label>Dirección</label><input type="text" id="cDireccion" placeholder="8409 W 108th St, Overland Park" /></div>
+        <div class="field"><label>Dirección</label><input type="text" id="cDireccion" placeholder="8409 W 108th St" /></div>
       </div>
-      <div class="field"><label>Descripción (opcional)</label><input type="text" id="cDescripcion" placeholder="Casa de 2 niveles, 3 habitaciones..." /></div>
+      <div class="field"><label>Descripción (opcional)</label><input type="text" id="cDescripcion" placeholder="Casa de 2 niveles..." /></div>
       <div id="casaError" class="error-msg"></div>
       <div style="display:flex;gap:8px">
         <button class="btn btn-primary" onclick="addCasa()">Guardar</button>
@@ -300,9 +373,13 @@ async function verReporteCasa(casaId) {
   const pct  = all.length ? Math.round(done/all.length*100) : 0;
   const total = all.reduce((a,t)=>a+Number(t.monto),0);
   const ganado = all.filter(t=>t.done).reduce((a,t)=>a+Number(t.monto),0);
-
   const workerIds = [...new Set(all.map(t=>t.empleado_id))];
-
+ 
+  const { data: docs } = await sb.from('documentos_casa').select('*').eq('casa_id', casaId).order('creado_en',{ascending:false});
+  const documentos = docs || [];
+  const asignados = workerIds.map(id => empleados.find(e=>e.id===id)).filter(Boolean);
+  const empOptsDoc = asignados.map(e=>`<option value="${e.id}">${e.nombre}</option>`).join('');
+ 
   $('pageContent').innerHTML = `
     <div class="page-header">
       <div><h2>📄 ${casa.nombre}</h2><p>📍 ${casa.direccion}</p></div>
@@ -323,6 +400,47 @@ async function verReporteCasa(casaId) {
       <div class="progress-label"><span>Progreso general</span><span>${pct}%</span></div>
       <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
     </div>
+ 
+    ${['admin','encargado'].includes(ME.rol) ? `
+    <div class="card">
+      <div class="card-title">📎 Documentos / PDFs de esta propiedad</div>
+      <div class="form-row">
+        <div class="field">
+          <label>Enviar a</label>
+          <select id="docDestinatario">
+            <option value="todos">👥 Todos los asignados a esta casa</option>
+            ${empOptsDoc}
+          </select>
+        </div>
+        <div class="field">
+          <label>Archivo PDF</label>
+          <input type="file" id="docArchivo" accept="application/pdf" />
+        </div>
+      </div>
+      <div id="docError" class="error-msg"></div>
+      <button class="btn btn-primary" onclick="subirDocumento(${casaId})">📤 Subir documento</button>
+      <hr class="divider">
+      ${documentos.length === 0
+        ? '<p style="font-size:13px;color:var(--text3)">No hay documentos subidos aún.</p>'
+        : documentos.map(d => {
+            const destino = d.destinatario === 'todos' ? '👥 Todos los asignados' : `👤 ${empName(d.destinatario)}`;
+            return `
+              <div class="task-item">
+                <div class="task-body">
+                  <div class="task-name">📄 ${d.nombre_archivo}</div>
+                  <div class="task-meta">
+                    <span style="font-size:11px;color:var(--text2)">${destino}</span>
+                    <span style="font-size:11px;color:var(--text3)">· ${fmtDT(d.creado_en)}</span>
+                  </div>
+                </div>
+                <div class="task-actions">
+                  <a href="${d.url_archivo}" target="_blank" class="btn btn-sm">👁 Ver</a>
+                  ${ME.rol==='admin'?`<button class="btn btn-sm btn-danger" onclick="eliminarDocumento(${d.id},${casaId})">🗑</button>`:''}
+                </div>
+              </div>`;
+          }).join('')}
+    </div>` : ''}
+ 
     ${all.length===0
       ? '<div class="card"><div class="empty-state"><div class="empty-icon">📋</div><p>No hay tareas.</p></div></div>'
       : workerIds.map(empId => {
@@ -379,6 +497,54 @@ async function toggleTareaReporte(id, casaId) {
 async function deleteTareaReporte(id, casaId) {
   if (!confirm('¿Eliminar esta tarea?')) return;
   await sb.from('tareas').delete().eq('id',id);
+  await verReporteCasa(casaId);
+}
+ 
+// ── DOCUMENTOS / PDFs ───────────────────────
+async function subirDocumento(casaId) {
+  const fileInput = $('docArchivo');
+  const destinatario = $('docDestinatario').value;
+  const errEl = $('docError');
+  const file = fileInput.files[0];
+ 
+  if (!file) { errEl.textContent = 'Selecciona un archivo PDF'; return; }
+  if (file.type !== 'application/pdf') { errEl.textContent = 'Solo se permiten archivos PDF'; return; }
+ 
+  errEl.style.color = 'var(--text2)';
+  errEl.textContent = 'Subiendo...';
+ 
+  const filePath = `casa_${casaId}/${Date.now()}_${file.name}`;
+  const { error: uploadError } = await sb.storage.from('documentos').upload(filePath, file);
+  if (uploadError) { errEl.style.color='var(--red)'; errEl.textContent = 'Error: '+uploadError.message; return; }
+ 
+  const { data: urlData } = sb.storage.from('documentos').getPublicUrl(filePath);
+ 
+  const { error: insertError } = await sb.from('documentos_casa').insert({
+    casa_id: casaId,
+    nombre_archivo: file.name,
+    url_archivo: urlData.publicUrl,
+    destinatario: destinatario,
+    subido_por: ME.id,
+  });
+  if (insertError) { errEl.style.color='var(--red)'; errEl.textContent = 'Error: '+insertError.message; return; }
+ 
+  // Notificar al destinatario o a todos los asignados
+  const { data: tareasCasa } = await sb.from('tareas').select('empleado_id').eq('casa_id', casaId);
+  const asignadosIds = [...new Set((tareasCasa||[]).map(t=>t.empleado_id))];
+  const casa = casas.find(c=>c.id===casaId);
+  const targets = destinatario === 'todos' ? asignadosIds : [destinatario];
+  for (const empId of targets) {
+    await sendNotification(empId, '📄 Nuevo documento disponible', `${casa.nombre} — ${file.name}`);
+  }
+ 
+  errEl.style.color = 'var(--green)';
+  errEl.textContent = '✓ Documento subido correctamente';
+  setTimeout(() => verReporteCasa(casaId), 1200);
+}
+ 
+async function eliminarDocumento(docId, casaId) {
+  if (!confirm('¿Eliminar este documento?')) return;
+  await sb.from('documentos_casa').delete().eq('id', docId);
   await verReporteCasa(casaId);
 }
  
@@ -460,12 +626,10 @@ async function addEmpleado() {
 async function renderTareas(preselectCasaId=null) {
   const { data } = await sb.from('tareas').select('*').order('creado_en',{ascending:false});
   const tareas = data || [];
- 
   const trabList = empleados.filter(e=>['trabajador','encargado'].includes(e.rol));
   const empOpts  = trabList.map(e=>`<option value="${e.id}">${e.nombre} (${ROLES[e.rol]?.label||e.rol})</option>`).join('');
   const casaOpts = casas.map(c=>`<option value="${c.id}" ${preselectCasaId===c.id?'selected':''}>${c.nombre} — ${c.direccion}</option>`).join('');
   const tipoOpts = Object.entries(TIPOS).map(([k,v])=>`<option value="${k}">${v.icon} ${v.label}</option>`).join('');
-  const predOpts = tipo => tareasPredef.filter(t=>t.rol===tipo).map(t=>`<option value="${t.descripcion}">${t.descripcion}</option>`).join('');
  
   $('pageContent').innerHTML = `
     <div class="page-header">
@@ -476,23 +640,16 @@ async function renderTareas(preselectCasaId=null) {
       <div class="card-title">Nueva tarea</div>
       <div class="form-row">
         <div class="field"><label>Propiedad</label>
-          <select id="fCasa">
-            <option value="">— Sin propiedad —</option>
-            ${casaOpts}
-          </select>
+          <select id="fCasa"><option value="">— Sin propiedad —</option>${casaOpts}</select>
         </div>
         <div class="field"><label>Empleado</label>
-          <select id="fEmpleado">
-            <option value="">— Selecciona empleado —</option>
-            ${empOpts}
-          </select>
+          <select id="fEmpleado"><option value="">— Selecciona empleado —</option>${empOpts}</select>
         </div>
       </div>
       <div class="form-row">
         <div class="field"><label>Tipo de trabajo</label>
           <select id="fTipo" onchange="onTipoChange(this)">
-            <option value="">— Selecciona tipo —</option>
-            ${tipoOpts}
+            <option value="">— Selecciona tipo —</option>${tipoOpts}
           </select>
         </div>
         <div class="field"><label>Tarea predefinida</label>
@@ -501,7 +658,7 @@ async function renderTareas(preselectCasaId=null) {
           </select>
         </div>
       </div>
-      <div class="field"><label>Descripción (editable)</label>
+      <div class="field"><label>Descripción</label>
         <input type="text" id="fDesc" placeholder="Descripción de la tarea" />
       </div>
       <div class="form-row">
@@ -581,6 +738,7 @@ async function addTarea() {
   if (!tipo)  { errEl.textContent='Selecciona el tipo de trabajo'; return; }
   if (!desc)  { errEl.textContent='Escribe una descripción'; return; }
   if (!monto||Number(monto)<=0) { errEl.textContent='Ingresa un monto válido'; return; }
+ 
   const { error } = await sb.from('tareas').insert({
     descripcion: desc, rol: tipo, tipo_trabajo: tipo, empleado_id: empId,
     monto: Number(monto), fecha_limite: fecha||null,
@@ -588,6 +746,16 @@ async function addTarea() {
     casa_id: casaId ? Number(casaId) : null,
   });
   if (error) { errEl.textContent='Error: '+error.message; return; }
+ 
+  // Enviar notificación al empleado
+  const emp = empleados.find(e=>e.id===empId);
+  const casa = casaId ? casas.find(c=>c.id===Number(casaId)) : null;
+  await sendNotification(
+    empId,
+    `🏠 Nueva tarea asignada`,
+    `${desc}${casa?' · '+casa.nombre:''} · ${fmtMoney(monto)}`
+  );
+ 
   errEl.textContent='';
   hideFormTarea();
   await renderTareas();
@@ -606,6 +774,7 @@ async function addTareasMultiples() {
   if (!tipo)           { errEl.textContent='Selecciona el tipo de trabajo'; return; }
   if (!checked.length) { errEl.textContent='Selecciona al menos una tarea'; return; }
   if (!global)         { errEl.textContent='Ingresa el monto global'; return; }
+ 
   const por  = Math.round(global/checked.length);
   const rows = checked.map(c=>({
     descripcion: c.value, rol: tipo, tipo_trabajo: tipo, empleado_id: empId,
@@ -615,6 +784,15 @@ async function addTareasMultiples() {
   }));
   const { error } = await sb.from('tareas').insert(rows);
   if (error) { errEl.textContent='Error: '+error.message; return; }
+ 
+  // Notificación
+  const casa = casaId ? casas.find(c=>c.id===Number(casaId)) : null;
+  await sendNotification(
+    empId,
+    `🏠 ${checked.length} nuevas tareas asignadas`,
+    `${TIPOS[tipo]?.label||tipo}${casa?' · '+casa.nombre:''} · ${fmtMoney(global)} total`
+  );
+ 
   errEl.textContent='';
   hideFormTarea();
   await renderTareas();
@@ -665,13 +843,24 @@ async function renderMisTareas() {
   const mis  = data || [];
   const done = mis.filter(t=>t.done).length;
   const pct  = mis.length ? Math.round(done/mis.length*100) : 0;
- 
   const porCasa = {};
   mis.forEach(t => {
     const key = t.casa_id||'sin-casa';
     if (!porCasa[key]) porCasa[key]=[];
     porCasa[key].push(t);
   });
+ 
+  const casaIds = Object.keys(porCasa).filter(k=>k!=='sin-casa').map(Number);
+  let docsPorCasa = {};
+  if (casaIds.length) {
+    const { data: docs } = await sb.from('documentos_casa').select('*').in('casa_id', casaIds);
+    (docs||[]).forEach(d => {
+      if (d.destinatario === 'todos' || d.destinatario === ME.id) {
+        if (!docsPorCasa[d.casa_id]) docsPorCasa[d.casa_id] = [];
+        docsPorCasa[d.casa_id].push(d);
+      }
+    });
+  }
  
   $('pageContent').innerHTML = `
     <div class="page-header"><div><h2>✅ Mis tareas</h2><p>Tus tareas asignadas</p></div></div>
@@ -689,9 +878,18 @@ async function renderMisTareas() {
       ? '<div class="card"><div class="empty-state"><div class="empty-icon">🎯</div><p>No tienes tareas aún.</p></div></div>'
       : Object.entries(porCasa).map(([key,ts])=>{
           const casa = key!=='sin-casa' ? casas.find(c=>c.id===Number(key)) : null;
+          const docs = casa ? (docsPorCasa[casa.id]||[]) : [];
           return `
             <div class="card">
-              <div class="card-title">${casa?`🏠 ${casa.nombre} — ${casa.direccion}`:'📋 Sin propiedad asignada'}</div>
+              <div class="card-title">${casa?`🏠 ${casa.nombre} — ${casa.direccion}`:'📋 Sin propiedad'}</div>
+              ${docs.length ? `
+                <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">
+                  ${docs.map(d=>`
+                    <a href="${d.url_archivo}" target="_blank" class="btn btn-sm" style="justify-content:flex-start">📄 ${d.nombre_archivo}</a>
+                  `).join('')}
+                </div>
+                <hr class="divider" style="margin:0 0 12px">
+              ` : ''}
               <div class="task-list">${ts.map(t=>renderTaskItem(t,false,true)).join('')}</div>
             </div>`;
         }).join('')}`;
@@ -760,21 +958,18 @@ async function renderEquipo() {
           const gan  = mis.filter(t=>t.done).reduce((a,t)=>a+Number(t.monto),0);
           const pend = mis.filter(t=>!t.done).reduce((a,t)=>a+Number(t.monto),0);
           const pct  = mis.length ? Math.round(done/mis.length*100) : 0;
- 
-          // tipos que hace este empleado
           const tipos = [...new Set(mis.map(t=>t.tipo_trabajo).filter(Boolean))];
- 
           return `
             <div class="card">
               <div class="worker-row" style="border:none;padding:0 0 12px">
                 <div class="worker-avatar" style="background:${rc.avatarBg};color:${rc.avatarColor}">${initials(w.nombre)}</div>
                 <div class="worker-info">
                   <div class="worker-name">${w.nombre}</div>
-                  <div class="worker-stats" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">
+                  <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">
                     ${rolBadge(w.rol)}
                     ${tipos.map(t=>tipoBadge(t)).join('')}
                   </div>
-                  <div style="font-size:11px;color:var(--text3);margin-top:4px">${done}/${mis.length} tareas completadas</div>
+                  <div style="font-size:11px;color:var(--text3);margin-top:4px">${done}/${mis.length} tareas</div>
                   <div class="progress-bar" style="margin-top:6px"><div class="progress-fill" style="width:${pct}%"></div></div>
                 </div>
                 <div class="worker-amount">${fmtMoney(gan)}<small>de ${fmtMoney(gan+pend)}</small></div>
@@ -795,6 +990,7 @@ async function renderEquipo() {
 async function renderCotizacion() {
   const { data } = await sb.from('cotizaciones').select('*').order('creado_en',{ascending:false}).limit(5);
   const lista = data||[];
+  materiales = []; // reinicia la lista cada vez que entras a la página
  
   $('pageContent').innerHTML = `
     <div class="page-header"><div><h2>📋 Cotización</h2><p>Genera cotizaciones por propiedad</p></div></div>
@@ -822,12 +1018,36 @@ async function renderCotizacion() {
         <div class="field"><label>🧹 Limpieza ($)</label><input type="number" id="cLimpieza" placeholder="0" /></div>
         <div class="field"><label>👁 Supervisión ($)</label><input type="number" id="cSupervision" placeholder="0" /></div>
       </div>
-      <div class="form-row">
-        <div class="field"><label>🔩 Materiales ($)</label><input type="number" id="cMat" placeholder="0" /></div>
-        <div class="field"><label>Margen admin (%)</label><input type="number" id="cMargen" value="20" /></div>
-      </div>
-      <button class="btn btn-primary" onclick="calcCotizacion()">Calcular cotización</button>
+      <div class="field"><label>Margen admin (%)</label><input type="number" id="cMargen" value="20" /></div>
     </div>
+ 
+    <div class="card">
+      <div class="card-title">🔩 Materiales (Home Depot)</div>
+      <div class="form-row">
+        <div class="field" style="flex:2">
+          <label>Buscar producto</label>
+          <input type="text" id="matBuscar" placeholder="Ej: pintura blanca 1 galón" />
+        </div>
+        <div class="field" style="display:flex;align-items:flex-end">
+          <button class="btn" style="width:100%" onclick="buscarEnHomeDepot()">🔍 Buscar en Home Depot</button>
+        </div>
+      </div>
+      <hr class="divider">
+      <div class="form-row-3">
+        <div class="field"><label>Nombre del material</label><input type="text" id="matNombre" placeholder="Pintura blanca 1 galón" /></div>
+        <div class="field"><label>Precio unitario ($)</label><input type="number" id="matPrecio" placeholder="35.00" step="0.01" /></div>
+        <div class="field"><label>Cantidad</label><input type="number" id="matCantidad" placeholder="1" value="1" /></div>
+      </div>
+      <button class="btn btn-primary" onclick="addMaterial()">＋ Agregar a la lista</button>
+      <div id="materialesLista" style="margin-top:12px"></div>
+      <div class="cot-row" style="margin-top:8px;border-top:1px solid var(--border);padding-top:10px">
+        <span style="font-weight:600">Total materiales</span>
+        <span id="totalMateriales" style="font-weight:700;color:var(--green)">$0</span>
+      </div>
+    </div>
+ 
+    <button class="btn btn-primary btn-full" onclick="calcCotizacion()" style="margin-bottom:1rem">Calcular cotización completa</button>
+ 
     <div id="cotResult" class="hidden card">
       <div class="card-title">📄 Resultado</div>
       <div id="cotBody"></div>
@@ -851,6 +1071,52 @@ function onCasaCotSelect(sel) {
   if (casa) $('cDir').value = casa.direccion;
 }
  
+function buscarEnHomeDepot() {
+  const termino = $('matBuscar').value.trim();
+  if (!termino) { alert('Escribe qué producto quieres buscar'); return; }
+  const url = `https://www.homedepot.com/s/${encodeURIComponent(termino)}`;
+  window.open(url, '_blank');
+  // Precarga el nombre en el campo de agregar material
+  $('matNombre').value = termino;
+}
+ 
+function addMaterial() {
+  const nombre = $('matNombre').value.trim();
+  const precio = Number($('matPrecio').value)||0;
+  const cantidad = Number($('matCantidad').value)||1;
+  if (!nombre) { alert('Escribe el nombre del material'); return; }
+  if (precio <= 0) { alert('Ingresa un precio válido'); return; }
+  materiales.push({ nombre, precio, cantidad });
+  $('matNombre').value = '';
+  $('matPrecio').value = '';
+  $('matCantidad').value = '1';
+  $('matBuscar').value = '';
+  renderMaterialesLista();
+}
+ 
+function removeMaterial(idx) {
+  materiales.splice(idx, 1);
+  renderMaterialesLista();
+}
+ 
+function renderMaterialesLista() {
+  const total = materiales.reduce((a,m)=>a+(m.precio*m.cantidad),0);
+  $('materialesLista').innerHTML = materiales.length === 0
+    ? '<p style="font-size:13px;color:var(--text3)">Sin materiales agregados.</p>'
+    : materiales.map((m,i)=>`
+        <div class="task-item">
+          <div class="task-body">
+            <div class="task-name">${m.nombre}</div>
+            <div class="task-meta">
+              <span style="font-size:12px;color:var(--text2)">${m.cantidad} × ${fmtMoney(m.precio)}</span>
+              <span class="task-amount">${fmtMoney(m.precio*m.cantidad)}</span>
+            </div>
+          </div>
+          <button class="btn btn-sm btn-danger" onclick="removeMaterial(${i})">🗑</button>
+        </div>`).join('');
+  $('totalMateriales').textContent = fmtMoney(total);
+}
+ 
 async function calcCotizacion() {
   const casaId     = $('cCasaId').value;
   const casa       = casaId ? casas.find(c=>c.id===Number(casaId)) : null;
@@ -858,7 +1124,7 @@ async function calcCotizacion() {
   const tecnico    = Number($('cTecnico').value)||0;
   const limpieza   = Number($('cLimpieza').value)||0;
   const supervision= Number($('cSupervision').value)||0;
-  const mat        = Number($('cMat').value)||0;
+  const mat        = materiales.reduce((a,m)=>a+(m.precio*m.cantidad),0);
   const margen     = Number($('cMargen').value)||20;
   const dir        = casa ? `${casa.nombre} — ${casa.direccion}` : $('cDir').value;
   const sub        = pintura+tecnico+limpieza+supervision+mat;
@@ -882,11 +1148,17 @@ async function calcCotizacion() {
       <div class="cot-row"><span>🔧 Técnico</span><span class="cot-val">${fmtMoney(tecnico)}</span></div>
       <div class="cot-row"><span>🧹 Limpieza</span><span class="cot-val">${fmtMoney(limpieza)}</span></div>
       <div class="cot-row"><span>👁 Supervisión</span><span class="cot-val">${fmtMoney(supervision)}</span></div>
-      <div class="cot-row"><span>🔩 Materiales</span><span class="cot-val">${fmtMoney(mat)}</span></div>
+      <div class="cot-row"><span>🔩 Materiales (${materiales.length} items)</span><span class="cot-val">${fmtMoney(mat)}</span></div>
       <div class="cot-row"><span>Subtotal</span><span class="cot-val">${fmtMoney(sub)}</span></div>
       <div class="cot-row"><span>Margen (${margen}%)</span><span class="cot-val">${fmtMoney(fee)}</span></div>
       <div class="cot-row total"><span>TOTAL</span><span>${fmtMoney(total)}</span></div>
     </div>
+    ${materiales.length ? `
+      <div class="section-label">Detalle de materiales</div>
+      ${materiales.map(m=>`
+        <div class="cot-row"><span>${m.nombre} (${m.cantidad}×)</span><span class="cot-val">${fmtMoney(m.precio*m.cantidad)}</span></div>
+      `).join('')}
+    ` : ''}
     <p style="font-size:11px;color:var(--text3);margin-top:8px">Generado: ${new Date().toLocaleDateString('es-MX',{day:'2-digit',month:'long',year:'numeric'})}</p>`;
 }
  
@@ -895,9 +1167,7 @@ async function calcCotizacion() {
 // ═══════════════════════════════════════════
 async function renderMiPerfil() {
   $('pageContent').innerHTML = `
-    <div class="page-header">
-      <div><h2>🔑 Mi perfil</h2><p>Actualiza tu contraseña</p></div>
-    </div>
+    <div class="page-header"><div><h2>🔑 Mi perfil</h2><p>Actualiza tu contraseña</p></div></div>
     <div class="card">
       <div class="card-title">Información</div>
       <div class="worker-row" style="border:none;padding:0">
@@ -928,14 +1198,4 @@ async function cambiarPassword() {
   if (error) { msg.style.color='var(--red)'; msg.textContent='Error: '+error.message; return; }
   msg.style.color='var(--green)'; msg.textContent='✓ Contraseña actualizada correctamente';
   $('pPass1').value=''; $('pPass2').value='';
-}
- 
-// ── MOBILE SIDEBAR ─────────────────────────
-function toggleSidebar() {
-  document.getElementById('sidebar').classList.toggle('open');
-  document.getElementById('overlay').classList.toggle('open');
-}
-function closeSidebar() {
-  document.getElementById('sidebar').classList.remove('open');
-  document.getElementById('overlay').classList.remove('open');
 }
