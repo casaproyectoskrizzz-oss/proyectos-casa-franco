@@ -305,11 +305,20 @@ async function renderCasas() {
   const { data: tareas } = await sb.from('tareas').select('*');
   const all = tareas || [];
  
+  // El encargado solo ve las casas que el admin le asignó
+  const casasVisibles = ME.rol === 'encargado'
+    ? casas.filter(c => c.encargado_id === ME.id)
+    : casas;
+ 
+  const encargadosOpts = empleados.filter(e=>e.rol==='encargado')
+    .map(e=>`<option value="${e.id}">${e.nombre}</option>`).join('');
+ 
   $('pageContent').innerHTML = `
     <div class="page-header">
-      <div><h2>🏠 Casas / Propiedades</h2><p>Gestiona las propiedades</p></div>
-      <button class="btn btn-primary" onclick="showFormCasa()">＋ Nueva propiedad</button>
+      <div><h2>🏠 Casas / Propiedades</h2><p>${ME.rol==='encargado'?'Tus propiedades asignadas':'Gestiona las propiedades'}</p></div>
+      ${ME.rol==='admin'?`<button class="btn btn-primary" onclick="showFormCasa()">＋ Nueva propiedad</button>`:''}
     </div>
+    ${ME.rol==='admin' ? `
     <div id="formCasa" class="card hidden">
       <div class="card-title">Nueva propiedad</div>
       <div class="form-row">
@@ -320,22 +329,29 @@ async function renderCasas() {
         <div class="field"><label>Fecha de inicio</label><input type="date" id="cFechaInicio" /></div>
         <div class="field"><label>Fecha de culminación</label><input type="date" id="cFechaFin" /></div>
       </div>
+      <div class="field"><label>Encargado asignado</label>
+        <select id="cEncargado">
+          <option value="">— Sin encargado —</option>
+          ${encargadosOpts}
+        </select>
+      </div>
       <div class="field"><label>Descripción (opcional)</label><input type="text" id="cDescripcion" placeholder="Casa de 2 niveles..." /></div>
       <div id="casaError" class="error-msg"></div>
       <div style="display:flex;gap:8px">
         <button class="btn btn-primary" onclick="addCasa()">Guardar</button>
         <button class="btn" onclick="hideFormCasa()">Cancelar</button>
       </div>
-    </div>
-    ${casas.length === 0
-      ? '<div class="card"><div class="empty-state"><div class="empty-icon">🏠</div><p>No hay propiedades. Agrega la primera.</p></div></div>'
-      : casas.map(casa => {
+    </div>` : ''}
+    ${casasVisibles.length === 0
+      ? `<div class="card"><div class="empty-state"><div class="empty-icon">🏠</div><p>${ME.rol==='encargado'?'No tienes propiedades asignadas aún.':'No hay propiedades. Agrega la primera.'}</p></div></div>`
+      : casasVisibles.map(casa => {
           const ct = all.filter(t=>t.casa_id===casa.id);
           const cd = ct.filter(t=>t.done).length;
           const pct = ct.length ? Math.round(cd/ct.length*100) : 0;
           const total = ct.reduce((a,t)=>a+Number(t.monto),0);
           const ganado = ct.filter(t=>t.done).reduce((a,t)=>a+Number(t.monto),0);
           const abierta = casaAbierta === casa.id;
+          const encargadoNombre = casa.encargado_id ? empName(casa.encargado_id) : null;
           return `
             <div class="card">
               <div style="cursor:pointer" onclick="toggleCasaAcordeon(${casa.id})">
@@ -343,6 +359,7 @@ async function renderCasas() {
                   <div>
                     <div style="font-size:16px;font-weight:600;color:var(--cyan)">${abierta?'▾':'▸'} 🏠 ${casa.nombre}</div>
                     <div style="font-size:12px;color:var(--text2);margin-top:3px">📍 ${casa.direccion}</div>
+                    ${encargadoNombre?`<div style="font-size:11px;color:var(--text3);margin-top:2px">👤 Encargado: ${encargadoNombre}</div>`:''}
                     ${(casa.fecha_inicio||casa.fecha_fin) ? `
                       <div style="font-size:11px;color:var(--text3);margin-top:2px">
                         ${casa.fecha_inicio?`🟢 Inicio: ${fmtDate(casa.fecha_inicio)}`:''}
@@ -359,7 +376,7 @@ async function renderCasas() {
                 <div style="margin-top:14px">
                   ${casa.descripcion?`<div style="font-size:12px;color:var(--text3);margin-bottom:10px">${casa.descripcion}</div>`:''}
                   <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
-                    ${ME.rol==='admin'?`<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();goToTareasCasa(${casa.id})">＋ Asignar tarea</button>`:''}
+                    ${['admin','encargado'].includes(ME.rol)?`<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();goToTareasCasa(${casa.id})">＋ Asignar tarea</button>`:''}
                     <button class="btn btn-sm" onclick="event.stopPropagation();verReporteCasa(${casa.id})">📄 Reporte</button>
                     ${ME.rol==='admin'?`<button class="btn btn-sm" onclick="event.stopPropagation();showFormEditarCasa(${casa.id})">✏ Editar</button>`:''}
                     ${ME.rol==='admin'?`<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deleteCasa(${casa.id})">🗑</button>`:''}
@@ -370,13 +387,20 @@ async function renderCasas() {
                     <div class="stat-card stat-cyan"><div class="stat-num" style="font-size:14px">${fmtMoney(ganado)}</div><div class="stat-lbl">Pagado</div></div>
                     <div class="stat-card stat-amber"><div class="stat-num" style="font-size:14px">${fmtMoney(total-ganado)}</div><div class="stat-lbl">Pendiente</div></div>
                   </div>
+                  ${ME.rol==='admin' ? `
                   <div id="formEditarCasa_${casa.id}" class="hidden" style="margin-top:12px;background:var(--bg3);border-radius:var(--radius);padding:12px">
                     <div class="form-row">
                       <div class="field"><label>Fecha de inicio</label><input type="date" id="eFechaInicio_${casa.id}" value="${casa.fecha_inicio||''}" /></div>
                       <div class="field"><label>Fecha de culminación</label><input type="date" id="eFechaFin_${casa.id}" value="${casa.fecha_fin||''}" /></div>
                     </div>
-                    <button class="btn btn-primary btn-sm" onclick="event.stopPropagation();guardarFechasCasa(${casa.id})">Guardar fechas</button>
-                  </div>
+                    <div class="field"><label>Encargado asignado</label>
+                      <select id="eEncargado_${casa.id}">
+                        <option value="">— Sin encargado —</option>
+                        ${empleados.filter(e=>e.rol==='encargado').map(e=>`<option value="${e.id}" ${casa.encargado_id===e.id?'selected':''}>${e.nombre}</option>`).join('')}
+                      </select>
+                    </div>
+                    <button class="btn btn-primary btn-sm" onclick="event.stopPropagation();guardarFechasCasa(${casa.id})">Guardar cambios</button>
+                  </div>` : ''}
                 </div>
               ` : ''}
             </div>`;
@@ -396,7 +420,11 @@ function showFormEditarCasa(id) {
 async function guardarFechasCasa(id) {
   const fi = $('eFechaInicio_'+id).value || null;
   const ff = $('eFechaFin_'+id).value || null;
-  await sb.from('casas').update({ fecha_inicio: fi, fecha_fin: ff }).eq('id', id);
+  const encEl = $('eEncargado_'+id);
+  const enc = encEl ? (encEl.value || null) : undefined;
+  const updateData = { fecha_inicio: fi, fecha_fin: ff };
+  if (enc !== undefined) updateData.encargado_id = enc;
+  await sb.from('casas').update(updateData).eq('id', id);
   await loadGlobal();
   await renderCasas();
 }
@@ -410,11 +438,12 @@ async function addCasa() {
   const desc   = $('cDescripcion').value.trim();
   const fi     = $('cFechaInicio').value || null;
   const ff     = $('cFechaFin').value || null;
+  const enc    = $('cEncargado').value || null;
   if (!nombre) { $('casaError').textContent = 'Escribe el nombre'; return; }
   if (!dir)    { $('casaError').textContent = 'Escribe la dirección'; return; }
   const { error } = await sb.from('casas').insert({
     nombre, direccion: dir, descripcion: desc||null,
-    fecha_inicio: fi, fecha_fin: ff, creado_por: ME.id
+    fecha_inicio: fi, fecha_fin: ff, encargado_id: enc, creado_por: ME.id
   });
   if (error) { $('casaError').textContent = 'Error: '+error.message; return; }
   await loadGlobal();
@@ -437,6 +466,7 @@ function goToTareasCasa(casaId) {
 }
  
 async function verReporteCasa(casaId) {
+  reporteCasaIdActual = casaId;
   const casa = casas.find(c=>c.id===casaId);
   const { data: tareas } = await sb.from('tareas').select('*').eq('casa_id', casaId);
   const all = tareas || [];
@@ -523,39 +553,51 @@ async function verReporteCasa(casaId) {
           const wg    = wt.filter(t=>t.done).reduce((a,t)=>a+Number(t.monto),0);
           const rc    = ROLES[emp?.rol]||ROLES.trabajador;
           const tipos = [...new Set(wt.map(t=>t.tipo_trabajo).filter(Boolean))];
+          const abiertoEmp = reporteCasaEmpAbierto === empId;
           return `
             <div class="card">
-              <div class="worker-row" style="border:none;padding:0 0 12px">
-                <div class="worker-avatar" style="background:${rc.avatarBg};color:${rc.avatarColor}">${initials(emp?.nombre||'?')}</div>
-                <div class="worker-info">
-                  <div class="worker-name">${emp?.nombre||'—'}</div>
-                  <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">${tipos.map(t=>tipoBadge(t)).join('')}</div>
-                  <div style="font-size:11px;color:var(--text3);margin-top:4px">${wd}/${wt.length} tareas · ${wp}%</div>
-                  <div class="progress-bar" style="margin-top:6px"><div class="progress-fill" style="width:${wp}%"></div></div>
+              <div style="cursor:pointer" onclick="toggleReporteCasaEmp('${empId}')">
+                <div class="worker-row" style="border:none;padding:0">
+                  <div class="worker-avatar" style="background:${rc.avatarBg};color:${rc.avatarColor}">${initials(emp?.nombre||'?')}</div>
+                  <div class="worker-info">
+                    <div class="worker-name">${abiertoEmp?'▾':'▸'} ${emp?.nombre||'—'}</div>
+                    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">${tipos.map(t=>tipoBadge(t)).join('')}</div>
+                    <div style="font-size:11px;color:var(--text3);margin-top:4px">${wd}/${wt.length} tareas · ${wp}%</div>
+                    <div class="progress-bar" style="margin-top:6px"><div class="progress-fill" style="width:${wp}%"></div></div>
+                  </div>
+                  <div class="worker-amount">${fmtMoney(wg)}<small>de ${fmtMoney(wm)}</small></div>
                 </div>
-                <div class="worker-amount">${fmtMoney(wg)}<small>de ${fmtMoney(wm)}</small></div>
               </div>
-              <hr class="divider" style="margin:0 0 10px">
-              <div class="task-list">
-                ${wt.map(t=>`
-                  <div class="task-item ${t.done?'done':''}">
-                    <div class="task-check ${t.done?'checked':''}" onclick="toggleTareaReporte(${t.id},${casaId})">${t.done?'✓':''}</div>
-                    <div class="task-body">
-                      <div class="task-name ${t.done?'done':''}">${t.descripcion}</div>
-                      <div class="task-meta">
-                        ${tipoBadge(t.tipo_trabajo)}
-                        <span class="task-amount">${fmtMoney(t.monto)}</span>
-                        ${taskBadge(t)}
-                        ${t.fecha_limite?`<span class="task-date">📅 ${fmtDate(t.fecha_limite)}</span>`:''}
-                        ${t.done&&t.done_at?`<span class="task-done-at">· ${fmtDT(t.done_at)}</span>`:''}
+              ${abiertoEmp ? `
+                <hr class="divider">
+                <div class="task-list">
+                  ${wt.map(t=>`
+                    <div class="task-item ${t.done?'done':''}">
+                      <div class="task-check ${t.done?'checked':''}" onclick="event.stopPropagation();toggleTareaReporte(${t.id},${casaId})">${t.done?'✓':''}</div>
+                      <div class="task-body">
+                        <div class="task-name ${t.done?'done':''}">${t.descripcion}</div>
+                        <div class="task-meta">
+                          ${tipoBadge(t.tipo_trabajo)}
+                          <span class="task-amount">${fmtMoney(t.monto)}</span>
+                          ${taskBadge(t)}
+                          ${t.fecha_limite?`<span class="task-date">📅 ${fmtDate(t.fecha_limite)}</span>`:''}
+                          ${t.done&&t.done_at?`<span class="task-done-at">· ${fmtDT(t.done_at)}</span>`:''}
+                        </div>
+                        ${t.notas?`<div style="font-size:11px;color:var(--text3);margin-top:3px">📌 ${t.notas}</div>`:''}
                       </div>
-                      ${t.notas?`<div style="font-size:11px;color:var(--text3);margin-top:3px">📌 ${t.notas}</div>`:''}
-                    </div>
-                    ${ME.rol==='admin'?`<button class="btn btn-sm btn-danger" onclick="deleteTareaReporte(${t.id},${casaId})">🗑</button>`:''}
-                  </div>`).join('')}
-              </div>
+                      ${ME.rol==='admin'?`<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deleteTareaReporte(${t.id},${casaId})">🗑</button>`:''}
+                    </div>`).join('')}
+                </div>
+              ` : ''}
             </div>`;
         }).join('')}`;
+}
+ 
+let reporteCasaEmpAbierto = null;
+let reporteCasaIdActual = null;
+function toggleReporteCasaEmp(empId) {
+  reporteCasaEmpAbierto = reporteCasaEmpAbierto === empId ? null : empId;
+  verReporteCasa(reporteCasaIdActual);
 }
  
 async function toggleTareaReporte(id, casaId) {
@@ -638,6 +680,7 @@ async function renderEmpleados() {
           <select id="eRol">
             <option value="trabajador">Trabajador</option>
             <option value="encargado">Encargado</option>
+            <option value="admin">Administrador</option>
           </select>
         </div>
       </div>
