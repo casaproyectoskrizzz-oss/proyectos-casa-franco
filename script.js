@@ -1333,6 +1333,10 @@ async function eliminarAbono(abonoId, empId) {
 // ═══════════════════════════════════════════
 let cotizacionAbierta = null;
 let cotizacionesLista = [];
+let materialesAcordeonAbierto = null; // id de cotización con el sub-detalle de materiales desplegado
+let ultimaCotizacionCalculada = null; // datos de la cotización recién calculada, para poder descargarla en PDF
+let cotizacionEditando = null; // id de cotización actualmente en modo edición
+let materialesEditando = []; // lista de materiales mientras se edita una cotización
  
 async function renderCotizacion() {
   const { data } = await sb.from('cotizaciones').select('*').order('creado_en',{ascending:false}).limit(5);
@@ -1408,7 +1412,9 @@ function renderCotizacionesAnterioresInner() {
     <div class="card-title">🕐 Cotizaciones anteriores</div>
     ${cotizacionesLista.map(c => {
       const abierta = cotizacionAbierta === c.id;
+      const editando = cotizacionEditando === c.id;
       const mats = c.materiales_detalle || [];
+      const matsAbiertos = materialesAcordeonAbierto === c.id;
       return `
         <div class="cot-row" style="cursor:pointer" onclick="toggleCotizacionAcordeon(${c.id})">
           <div>
@@ -1417,24 +1423,191 @@ function renderCotizacionesAnterioresInner() {
           </div>
           <span style="font-weight:700;color:var(--cyan)">${fmtMoney(c.total)}</span>
         </div>
-        ${abierta ? `
+        ${abierta ? (editando ? renderEdicionCotizacion(c) : `
           <div style="background:var(--bg3);border-radius:var(--radius);padding:12px;margin:0 0 10px">
             ${(c.habitaciones||c.banos||c.area) ? `<div style="font-size:12px;color:var(--text3);margin-bottom:8px">${c.habitaciones?c.habitaciones+' hab':''}${c.habitaciones&&c.banos?' · ':''}${c.banos?c.banos+' baños':''}${(c.habitaciones||c.banos)&&c.area?' · ':''}${c.area?c.area+' m²':''}</div>` : ''}
             <div class="cot-row"><span>🎨 Pintura</span><span class="cot-val">${fmtMoney(c.costo_pintura)}</span></div>
             <div class="cot-row"><span>🔧 Técnico</span><span class="cot-val">${fmtMoney(c.costo_tecnico)}</span></div>
             <div class="cot-row"><span>🧹 Limpieza</span><span class="cot-val">${fmtMoney(c.costo_limpieza)}</span></div>
             <div class="cot-row"><span>👁 Supervisión</span><span class="cot-val">${fmtMoney(c.costo_encargado)}</span></div>
-            <div class="cot-row"><span>🔩 Materiales (${mats.length} items)</span><span class="cot-val">${fmtMoney(c.materiales)}</span></div>
+            <div class="cot-row" style="cursor:pointer" onclick="event.stopPropagation();toggleMaterialesAcordeon(${c.id})">
+              <span>${matsAbiertos?'▾':'▸'} 🔩 Materiales (${mats.length} items)</span>
+              <span class="cot-val">${fmtMoney(c.materiales)}</span>
+            </div>
+            ${matsAbiertos ? (mats.length ? `
+              <div style="margin:4px 0 8px 14px;border-left:2px solid var(--cyan);padding-left:10px">
+                ${mats.map(m=>`
+                  <div class="cot-row" style="padding:6px 0">
+                    <div>
+                      <div style="font-size:13px;color:var(--text)">${m.nombre}</div>
+                      <div style="font-size:11px;color:var(--text3)">${m.cantidad} × ${fmtMoney(m.precio)} c/u</div>
+                    </div>
+                    <span class="cot-val">${fmtMoney(m.precio*m.cantidad)}</span>
+                  </div>`).join('')}
+              </div>
+            ` : `<p style="font-size:12px;color:var(--text3);margin:4px 0 8px 14px">Esta cotización no tiene el detalle de materiales guardado (se creó antes de activar esta función).</p>`) : ''}
             <div class="cot-row"><span>Subtotal</span><span class="cot-val">${fmtMoney(c.subtotal)}</span></div>
             <div class="cot-row"><span>Margen (${c.margen}%)</span><span class="cot-val">${fmtMoney(c.admin_fee)}</span></div>
             <div class="cot-row total"><span>TOTAL</span><span>${fmtMoney(c.total)}</span></div>
-            ${mats.length ? `
-              <div class="section-label" style="margin-top:8px">Detalle de materiales</div>
-              ${mats.map(m=>`<div class="cot-row"><span>${m.nombre} (${m.cantidad}×)</span><span class="cot-val">${fmtMoney(m.precio*m.cantidad)}</span></div>`).join('')}
-            ` : ''}
+            <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+              <button class="btn btn-sm btn-primary" onclick="event.stopPropagation();descargarCotizacionPDF(${c.id})">📥 Descargar PDF</button>
+              <button class="btn btn-sm" onclick="event.stopPropagation();toggleEditarCotizacion(${c.id})">✏ Editar</button>
+              <button class="btn btn-sm btn-danger" onclick="event.stopPropagation();eliminarCotizacion(${c.id})">🗑 Eliminar</button>
+            </div>
           </div>
-        ` : ''}`;
+        `) : ''}`;
     }).join('')}`;
+}
+ 
+function renderEdicionCotizacion(c) {
+  return `
+    <div style="background:var(--bg3);border-radius:var(--radius);padding:12px;margin:0 0 10px" onclick="event.stopPropagation()">
+      <div class="card-title" style="font-size:13px">✏ Editar cotización</div>
+      <div class="form-row">
+        <div class="field"><label>Dirección</label><input type="text" id="ecDir_${c.id}" value="${c.direccion||''}" /></div>
+        <div class="field"><label>Margen admin (%)</label><input type="number" id="ecMargen_${c.id}" value="${c.margen}" /></div>
+      </div>
+      <div class="form-row-3">
+        <div class="field"><label>Habitaciones</label><input type="number" id="ecHab_${c.id}" value="${c.habitaciones||''}" /></div>
+        <div class="field"><label>Baños</label><input type="number" id="ecBan_${c.id}" value="${c.banos||''}" /></div>
+        <div class="field"><label>Área m²</label><input type="number" id="ecArea_${c.id}" value="${c.area||''}" /></div>
+      </div>
+      <div class="form-row">
+        <div class="field"><label>🎨 Pintura ($)</label><input type="number" id="ecPintura_${c.id}" value="${c.costo_pintura}" /></div>
+        <div class="field"><label>🔧 Técnico ($)</label><input type="number" id="ecTecnico_${c.id}" value="${c.costo_tecnico}" /></div>
+      </div>
+      <div class="form-row">
+        <div class="field"><label>🧹 Limpieza ($)</label><input type="number" id="ecLimpieza_${c.id}" value="${c.costo_limpieza}" /></div>
+        <div class="field"><label>👁 Supervisión ($)</label><input type="number" id="ecSupervision_${c.id}" value="${c.costo_encargado}" /></div>
+      </div>
+      <hr class="divider">
+      <div class="card-title" style="font-size:13px">🔩 Materiales</div>
+      <div class="form-row-3">
+        <div class="field"><label>Nombre</label><input type="text" id="ecMatNombre_${c.id}" placeholder="Pintura blanca 1 galón" /></div>
+        <div class="field"><label>Precio unitario ($)</label><input type="number" id="ecMatPrecio_${c.id}" step="0.01" placeholder="35.00" /></div>
+        <div class="field"><label>Cantidad</label><input type="number" id="ecMatCantidad_${c.id}" value="1" /></div>
+      </div>
+      <button class="btn btn-sm" onclick="addMaterialEditando(${c.id})">＋ Agregar material</button>
+      <div id="ecMatLista_${c.id}" style="margin-top:10px">${renderMaterialesEditandoLista(c.id)}</div>
+      <div id="ecError_${c.id}" class="error-msg"></div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="btn btn-primary btn-sm" onclick="guardarEdicionCotizacion(${c.id})">Guardar cambios</button>
+        <button class="btn btn-sm" onclick="toggleEditarCotizacion(${c.id})">Cancelar</button>
+      </div>
+    </div>`;
+}
+ 
+function renderMaterialesEditandoLista(id) {
+  if (!materialesEditando.length) return '<p style="font-size:12px;color:var(--text3)">Sin materiales agregados.</p>';
+  return materialesEditando.map((m,i)=>`
+    <div class="task-item">
+      <div class="task-body">
+        <div class="task-name">${m.nombre}</div>
+        <div class="task-meta">
+          <span style="font-size:12px;color:var(--text2)">${m.cantidad} × ${fmtMoney(m.precio)}</span>
+          <span class="task-amount">${fmtMoney(m.precio*m.cantidad)}</span>
+        </div>
+      </div>
+      <button class="btn btn-sm btn-danger" onclick="removeMaterialEditando(${i},${id})">🗑</button>
+    </div>`).join('');
+}
+ 
+function toggleEditarCotizacion(id) {
+  if (cotizacionEditando === id) {
+    cotizacionEditando = null;
+    materialesEditando = [];
+  } else {
+    const c = cotizacionesLista.find(x => x.id === id);
+    materialesEditando = c && c.materiales_detalle ? JSON.parse(JSON.stringify(c.materiales_detalle)) : [];
+    cotizacionEditando = id;
+  }
+  const wrap = $('cotizacionesAnterioresWrap');
+  if (wrap) wrap.innerHTML = renderCotizacionesAnterioresInner();
+}
+ 
+function addMaterialEditando(id) {
+  const nombre = $('ecMatNombre_'+id).value.trim();
+  const precio = Number($('ecMatPrecio_'+id).value)||0;
+  const cantidad = Number($('ecMatCantidad_'+id).value)||1;
+  if (!nombre) { alert('Escribe el nombre del material'); return; }
+  if (precio <= 0) { alert('Ingresa un precio válido'); return; }
+  materialesEditando.push({ nombre, precio, cantidad });
+  $('ecMatLista_'+id).innerHTML = renderMaterialesEditandoLista(id);
+  $('ecMatNombre_'+id).value = '';
+  $('ecMatPrecio_'+id).value = '';
+  $('ecMatCantidad_'+id).value = '1';
+}
+ 
+function removeMaterialEditando(idx, id) {
+  materialesEditando.splice(idx, 1);
+  $('ecMatLista_'+id).innerHTML = renderMaterialesEditandoLista(id);
+}
+ 
+async function guardarEdicionCotizacion(id) {
+  const errEl = $('ecError_'+id);
+  const dir = $('ecDir_'+id).value.trim();
+  const margen = Number($('ecMargen_'+id).value)||0;
+  const habitaciones = $('ecHab_'+id).value || null;
+  const banos = $('ecBan_'+id).value || null;
+  const area = $('ecArea_'+id).value || null;
+  const pintura = Number($('ecPintura_'+id).value)||0;
+  const tecnico = Number($('ecTecnico_'+id).value)||0;
+  const limpieza = Number($('ecLimpieza_'+id).value)||0;
+  const supervision = Number($('ecSupervision_'+id).value)||0;
+  const mat = materialesEditando.reduce((a,m)=>a+(m.precio*m.cantidad),0);
+  const sub = pintura+tecnico+limpieza+supervision+mat;
+  const fee = Math.round(sub*margen/100);
+  const total = sub+fee;
+ 
+  const { error } = await sb.from('cotizaciones').update({
+    direccion: dir, habitaciones, banos, area,
+    costo_pintura: pintura, costo_tecnico: tecnico,
+    costo_limpieza: limpieza, costo_encargado: supervision,
+    materiales: mat, materiales_detalle: materialesEditando,
+    margen, subtotal: sub, admin_fee: fee, total,
+  }).eq('id', id);
+ 
+  if (error) { errEl.textContent = 'Error: '+error.message; return; }
+ 
+  const idx = cotizacionesLista.findIndex(x => x.id === id);
+  if (idx !== -1) {
+    cotizacionesLista[idx] = {
+      ...cotizacionesLista[idx],
+      direccion: dir, habitaciones, banos, area,
+      costo_pintura: pintura, costo_tecnico: tecnico,
+      costo_limpieza: limpieza, costo_encargado: supervision,
+      materiales: mat, materiales_detalle: materialesEditando,
+      margen, subtotal: sub, admin_fee: fee, total,
+    };
+  }
+ 
+  cotizacionEditando = null;
+  materialesEditando = [];
+  showToast('Cotización actualizada correctamente', 'success');
+  const wrap = $('cotizacionesAnterioresWrap');
+  if (wrap) wrap.innerHTML = renderCotizacionesAnterioresInner();
+}
+ 
+async function eliminarCotizacion(id) {
+  const ok = await showConfirm('Esta acción no se puede deshacer.', '¿Eliminar esta cotización?');
+  if (!ok) return;
+  const { error } = await sb.from('cotizaciones').delete().eq('id', id);
+  if (error) { showToast('Error: '+error.message, 'error'); return; }
+  cotizacionesLista = cotizacionesLista.filter(x => x.id !== id);
+  if (cotizacionAbierta === id) cotizacionAbierta = null;
+  if (cotizacionEditando === id) { cotizacionEditando = null; materialesEditando = []; }
+  showToast('Cotización eliminada', 'success');
+  const wrap = $('cotizacionesAnterioresWrap');
+  if (wrap) {
+    wrap.innerHTML = renderCotizacionesAnterioresInner();
+    if (!cotizacionesLista.length) wrap.remove();
+  }
+}
+ 
+function toggleMaterialesAcordeon(id) {
+  materialesAcordeonAbierto = materialesAcordeonAbierto === id ? null : id;
+  const wrap = $('cotizacionesAnterioresWrap');
+  if (wrap) wrap.innerHTML = renderCotizacionesAnterioresInner();
 }
  
 function toggleCotizacionAcordeon(id) {
@@ -1508,14 +1681,17 @@ async function calcCotizacion() {
   const fee        = Math.round(sub*margen/100);
   const total      = sub+fee;
  
-  await sb.from('cotizaciones').insert({
+  const cotizacionData = {
     direccion: dir, area: $('cArea').value||null,
     habitaciones: $('cHab').value||null, banos: $('cBan').value||null,
     costo_pintura: pintura, costo_tecnico: tecnico,
     costo_limpieza: limpieza, costo_encargado: supervision,
     materiales: mat, materiales_detalle: materiales, margen, subtotal: sub, admin_fee: fee, total,
     creado_por: ME.id,
-  });
+  };
+ 
+  await sb.from('cotizaciones').insert(cotizacionData);
+  ultimaCotizacionCalculada = { ...cotizacionData, creado_en: new Date().toISOString() };
  
   $('cotResult').classList.remove('hidden');
   $('cotBody').innerHTML = `
@@ -1536,7 +1712,77 @@ async function calcCotizacion() {
         <div class="cot-row"><span>${m.nombre} (${m.cantidad}×)</span><span class="cot-val">${fmtMoney(m.precio*m.cantidad)}</span></div>
       `).join('')}
     ` : ''}
-    <p style="font-size:11px;color:var(--text3);margin-top:8px">Generado: ${new Date().toLocaleDateString('es-MX',{day:'2-digit',month:'long',year:'numeric'})}</p>`;
+    <p style="font-size:11px;color:var(--text3);margin-top:8px">Generado: ${new Date().toLocaleDateString('es-MX',{day:'2-digit',month:'long',year:'numeric'})}</p>
+    <button class="btn btn-primary btn-sm" style="margin-top:10px" onclick="descargarUltimaCotizacionPDF()">📥 Descargar PDF</button>`;
+}
+ 
+// ── PDF DE COTIZACIONES ─────────────────────
+function descargarUltimaCotizacionPDF() {
+  if (!ultimaCotizacionCalculada) { alert('No hay una cotización calculada para descargar'); return; }
+  generarPDFCotizacion(ultimaCotizacionCalculada);
+}
+ 
+function descargarCotizacionPDF(id) {
+  const c = cotizacionesLista.find(x => x.id === id);
+  if (!c) return;
+  generarPDFCotizacion(c);
+}
+ 
+function generarPDFCotizacion(c) {
+  if (!window.jspdf) { alert('No se pudo cargar la librería de PDF. Revisa tu conexión a internet e intenta de nuevo.'); return; }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const mats = c.materiales_detalle || [];
+ 
+  doc.setFontSize(16);
+  doc.text('Cotización — Casa Manager', 14, 18);
+  doc.setFontSize(11);
+  doc.text(c.direccion || 'Sin dirección', 14, 26);
+  doc.setFontSize(9);
+  doc.text('Fecha: ' + new Date(c.creado_en).toLocaleDateString('es-MX',{day:'2-digit',month:'long',year:'numeric'}), 14, 32);
+ 
+  let y = 40;
+  if (c.habitaciones || c.banos || c.area) {
+    const detalles = [];
+    if (c.habitaciones) detalles.push(c.habitaciones + ' hab');
+    if (c.banos) detalles.push(c.banos + ' baños');
+    if (c.area) detalles.push(c.area + ' m²');
+    doc.setFontSize(9);
+    doc.text(detalles.join(' · '), 14, y);
+    y += 6;
+  }
+ 
+  doc.autoTable({
+    startY: y,
+    head: [['Concepto', 'Monto']],
+    body: [
+      ['Pintura', fmtMoney(c.costo_pintura)],
+      ['Técnico', fmtMoney(c.costo_tecnico)],
+      ['Limpieza', fmtMoney(c.costo_limpieza)],
+      ['Supervisión', fmtMoney(c.costo_encargado)],
+      ['Materiales', fmtMoney(c.materiales)],
+      ['Subtotal', fmtMoney(c.subtotal)],
+      [`Margen (${c.margen}%)`, fmtMoney(c.admin_fee)],
+      ['TOTAL', fmtMoney(c.total)],
+    ],
+    theme: 'striped',
+    headStyles: { fillColor: [0, 180, 165] },
+  });
+ 
+  if (mats.length) {
+    const y2 = doc.lastAutoTable.finalY + 10;
+    doc.setFontSize(11);
+    doc.text('Detalle de materiales', 14, y2);
+    doc.autoTable({
+      startY: y2 + 4,
+      head: [['Material', 'Cantidad', 'Precio unit.', 'Total']],
+      body: mats.map(m => [m.nombre, String(m.cantidad), fmtMoney(m.precio), fmtMoney(m.precio*m.cantidad)]),
+      theme: 'grid',
+    });
+  }
+ 
+  const slug = (c.direccion || 'sin_direccion').toLowerCase().replace(/[^a-z0-9]+/g,'_').substring(0,40);
+  doc.save(`cotizacion_${slug}.pdf`);
 }
  
 // ═══════════════════════════════════════════
