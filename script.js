@@ -98,9 +98,9 @@ const TIPOS = {
 };
  
 const NAV = {
-  admin:     [{ id:'resumen', icon:'📊', label:'Resumen' },{ id:'casas', icon:'🏠', label:'Casas' },{ id:'empleados', icon:'👤', label:'Empleados' },{ id:'tareas', icon:'✅', label:'Tareas' },{ id:'equipo', icon:'👥', label:'Equipo y pagos' },{ id:'cotizacion', icon:'📋', label:'Cotización' },{ id:'mi-perfil', icon:'🔑', label:'Mi perfil' }],
-  encargado: [{ id:'resumen', icon:'📊', label:'Resumen' },{ id:'casas', icon:'🏠', label:'Casas' },{ id:'mis-tareas', icon:'✅', label:'Mis tareas' },{ id:'equipo', icon:'👥', label:'Equipo y pagos' },{ id:'mi-perfil', icon:'🔑', label:'Mi perfil' }],
-  trabajador:[{ id:'mis-tareas', icon:'✅', label:'Mis tareas' },{ id:'mis-pagos', icon:'💰', label:'Mis pagos' },{ id:'mi-perfil', icon:'🔑', label:'Mi perfil' }],
+  admin:     [{ id:'resumen', icon:'📊', label:'Resumen' },{ id:'casas', icon:'🏠', label:'Casas' },{ id:'vacantes', icon:'📢', label:'Vacantes' },{ id:'empleados', icon:'👤', label:'Empleados' },{ id:'tareas', icon:'✅', label:'Tareas' },{ id:'equipo', icon:'👥', label:'Equipo y pagos' },{ id:'cotizacion', icon:'📋', label:'Cotización' },{ id:'mi-perfil', icon:'🔑', label:'Mi perfil' }],
+  encargado: [{ id:'resumen', icon:'📊', label:'Resumen' },{ id:'casas', icon:'🏠', label:'Casas' },{ id:'mis-tareas', icon:'✅', label:'Mis tareas' },{ id:'trabajos-disponibles', icon:'📢', label:'Trabajos disponibles' },{ id:'equipo', icon:'👥', label:'Equipo y pagos' },{ id:'mi-perfil', icon:'🔑', label:'Mi perfil' }],
+  trabajador:[{ id:'mis-tareas', icon:'✅', label:'Mis tareas' },{ id:'trabajos-disponibles', icon:'📢', label:'Trabajos disponibles' },{ id:'mis-pagos', icon:'💰', label:'Mis pagos' },{ id:'mi-perfil', icon:'🔑', label:'Mi perfil' }],
 };
  
 // ── ESTADO ─────────────────────────────────
@@ -215,6 +215,8 @@ async function goTo(pageId) {
     case 'equipo':     await renderEquipo(); break;
     case 'cotizacion': await renderCotizacion(); break;
     case 'mi-perfil':  await renderMiPerfil(); break;
+    case 'vacantes':   await renderVacantes(); break;
+    case 'trabajos-disponibles': await renderTrabajosDisponibles(); break;
   }
 }
  
@@ -1478,4 +1480,271 @@ async function cambiarPassword() {
   if (error) { msg.style.color='var(--red)'; msg.textContent='Error: '+error.message; return; }
   msg.style.color='var(--green)'; msg.textContent='✓ Contraseña actualizada correctamente';
   $('pPass1').value=''; $('pPass2').value='';
+}
+ 
+// ═══════════════════════════════════════════
+//  VACANTES (Admin)
+// ═══════════════════════════════════════════
+let formVacanteVisible = false;
+ 
+async function renderVacantes() {
+  const { data: tareas } = await sb.from('tareas').select('*');
+  const all = tareas || [];
+  const { data: vacantesData } = await sb.from('vacantes').select('*').order('creado_en',{ascending:false});
+  const vacantes = vacantesData || [];
+ 
+  const workers = empleados.filter(e=>['trabajador','encargado'].includes(e.rol));
+  const workersConteo = workers.map(w => ({
+    ...w,
+    totalTareas: all.filter(t=>t.empleado_id===w.id).length,
+    tareasActivas: all.filter(t=>t.empleado_id===w.id && !t.done).length,
+  })).sort((a,b) => a.tareasActivas - b.tareasActivas);
+ 
+  const tipoOpts = Object.entries(TIPOS).map(([k,v])=>`<option value="${k}">${v.icon} ${v.label}</option>`).join('');
+  const casaOpts = casas.map(c=>`<option value="${c.id}">${c.nombre} — ${c.direccion}</option>`).join('');
+  const empCheckboxes = workers.map(w => `
+    <label class="check-item">
+      <input type="checkbox" class="vac-emp-check" value="${w.id}" />
+      <span>${w.nombre} (${workersConteo.find(x=>x.id===w.id)?.tareasActivas||0} activas)</span>
+    </label>`).join('');
+ 
+  const vacantesAbiertas = vacantes.filter(v=>v.estado==='abierta');
+  const vacantesCerradas = vacantes.filter(v=>v.estado!=='abierta');
+ 
+  $('pageContent').innerHTML = `
+    <div class="page-header">
+      <div><h2>📢 Vacantes</h2><p>Empleados disponibles y trabajos abiertos</p></div>
+      <button class="btn btn-primary" onclick="toggleFormVacante()">＋ Lanzar vacante</button>
+    </div>
+ 
+    <div id="formVacante" class="card ${formVacanteVisible?'':'hidden'}">
+      <div class="card-title">Nueva vacante de trabajo</div>
+      <div class="form-row">
+        <div class="field"><label>Propiedad existente</label>
+          <select id="vCasaExistente" onchange="onVacCasaToggle(this)">
+            <option value="">— Crear casa nueva —</option>
+            ${casaOpts}
+          </select>
+        </div>
+        <div class="field"><label>Tipo de trabajo</label>
+          <select id="vTipo"><option value="">— Selecciona —</option>${tipoOpts}</select>
+        </div>
+      </div>
+      <div id="vCasaNuevaWrap" class="form-row">
+        <div class="field"><label>Nombre de la casa nueva</label><input type="text" id="vCasaNombre" placeholder="Casa Familia López" /></div>
+        <div class="field"><label>Dirección</label><input type="text" id="vCasaDireccion" placeholder="123 Main St" /></div>
+      </div>
+      <div class="field"><label>Especificación del trabajo</label><input type="text" id="vDesc" placeholder="Limpieza profunda de toda la casa antes de entrega" /></div>
+      <div class="form-row">
+        <div class="field"><label>Fecha inicial</label><input type="date" id="vFechaInicio" /></div>
+        <div class="field"><label>Fecha límite</label><input type="date" id="vFechaLimite" /></div>
+      </div>
+      <div class="field"><label>Pago ($)</label><input type="number" id="vMonto" placeholder="500" step="0.01" /></div>
+      <div class="field"><label>Notas (opcional)</label><input type="text" id="vNotas" placeholder="Detalles adicionales..." /></div>
+      <hr class="divider">
+      <div class="card-title" style="font-size:13px">👥 Empleados que pueden ver esta vacante</div>
+      <div class="checklist-grid">${empCheckboxes}</div>
+      <div id="vacError" class="error-msg"></div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn btn-primary" onclick="lanzarVacante()">📢 Lanzar vacante</button>
+        <button class="btn" onclick="toggleFormVacante()">Cancelar</button>
+      </div>
+    </div>
+ 
+    <div class="card">
+      <div class="card-title">👤 Empleados (de menos a más cargados)</div>
+      ${workersConteo.length === 0
+        ? '<div class="empty-state"><p>No hay empleados registrados.</p></div>'
+        : workersConteo.map(w => {
+            const rc = ROLES[w.rol]||ROLES.trabajador;
+            return `<div class="worker-row">
+              <div class="worker-avatar" style="background:${rc.avatarBg};color:${rc.avatarColor}">${initials(w.nombre)}</div>
+              <div class="worker-info">
+                <div class="worker-name">${w.nombre}</div>
+                <div class="worker-stats">${rolBadge(w.rol)} · ${w.tareasActivas} tareas activas / ${w.totalTareas} total</div>
+              </div>
+            </div>`;
+          }).join('')}
+    </div>
+ 
+    ${vacantesAbiertas.length ? `
+      <div class="card">
+        <div class="card-title">📢 Vacantes abiertas (${vacantesAbiertas.length})</div>
+        ${vacantesAbiertas.map(v => renderVacanteCard(v)).join('')}
+      </div>` : ''}
+ 
+    ${vacantesCerradas.length ? `
+      <div class="card">
+        <div class="card-title">📋 Historial de vacantes</div>
+        ${vacantesCerradas.map(v => renderVacanteCard(v)).join('')}
+      </div>` : ''}`;
+}
+ 
+function renderVacanteCard(v) {
+  const casa = v.casa_id ? casas.find(c=>c.id===v.casa_id) : null;
+  const invitados = (v.empleados_invitados||[]).map(id=>empName(id)).join(', ');
+  const estadoBadge = v.estado==='abierta'
+    ? '<span class="badge badge-pendiente">⏳ Abierta</span>'
+    : v.estado==='tomada'
+      ? `<span class="badge badge-completa">✓ Tomada por ${empName(v.empleado_aceptado)}</span>`
+      : '<span class="badge badge-vencida">Cancelada</span>';
+  return `
+    <div class="task-item">
+      <div class="task-body">
+        <div class="task-name">${v.descripcion}</div>
+        <div class="task-meta">
+          ${tipoBadge(v.tipo_trabajo)}
+          ${casa?`<span style="font-size:11px;color:var(--cyan)">🏠 ${casa.nombre}</span>`:''}
+          <span class="task-amount">${fmtMoney(v.monto)}</span>
+          ${estadoBadge}
+          ${v.fecha_limite?`<span class="task-date">📅 ${fmtDate(v.fecha_limite)}</span>`:''}
+        </div>
+        <div style="font-size:11px;color:var(--text3);margin-top:3px">👥 Invitados: ${invitados||'—'}</div>
+      </div>
+      ${v.estado==='abierta'?`<button class="btn btn-sm btn-danger" onclick="cancelarVacante(${v.id})">🗑</button>`:''}
+    </div>`;
+}
+ 
+function toggleFormVacante() {
+  formVacanteVisible = !formVacanteVisible;
+  renderVacantes();
+}
+ 
+function onVacCasaToggle(sel) {
+  $('vCasaNuevaWrap').style.display = sel.value ? 'none' : 'flex';
+}
+ 
+async function lanzarVacante() {
+  const casaExistente = $('vCasaExistente').value;
+  const tipo = $('vTipo').value;
+  const desc = $('vDesc').value.trim();
+  const fi = $('vFechaInicio').value || null;
+  const ff = $('vFechaLimite').value || null;
+  const monto = Number($('vMonto').value)||0;
+  const notas = $('vNotas').value.trim();
+  const errEl = $('vacError');
+  const checked = [...document.querySelectorAll('.vac-emp-check:checked')].map(c=>c.value);
+ 
+  if (!tipo) { errEl.textContent = 'Selecciona el tipo de trabajo'; return; }
+  if (!desc) { errEl.textContent = 'Escribe la especificación'; return; }
+  if (monto <= 0) { errEl.textContent = 'Ingresa un monto válido'; return; }
+  if (!checked.length) { errEl.textContent = 'Selecciona al menos un empleado'; return; }
+ 
+  let casaId = casaExistente ? Number(casaExistente) : null;
+ 
+  if (!casaId) {
+    const nombreCasa = $('vCasaNombre').value.trim();
+    const dirCasa = $('vCasaDireccion').value.trim();
+    if (!nombreCasa || !dirCasa) { errEl.textContent = 'Completa nombre y dirección de la casa nueva'; return; }
+    const { data: nuevaCasa, error: errCasa } = await sb.from('casas').insert({
+      nombre: nombreCasa, direccion: dirCasa, creado_por: ME.id
+    }).select().single();
+    if (errCasa) { errEl.textContent = 'Error creando casa: '+errCasa.message; return; }
+    casaId = nuevaCasa.id;
+  }
+ 
+  const { data: vacante, error } = await sb.from('vacantes').insert({
+    casa_id: casaId, descripcion: desc, tipo_trabajo: tipo,
+    fecha_inicio: fi, fecha_limite: ff, monto, notas: notas||null,
+    empleados_invitados: checked, creado_por: ME.id,
+  }).select().single();
+ 
+  if (error) { errEl.textContent = 'Error: '+error.message; return; }
+ 
+  const casaNombre = casas.find(c=>c.id===casaId)?.nombre || (await sb.from('casas').select('nombre').eq('id',casaId).single()).data?.nombre || '';
+  for (const empId of checked) {
+    await sendNotification(empId, '📢 Hay un trabajo para ti', `${desc}${casaNombre?' · '+casaNombre:''} · ${fmtMoney(monto)}. ¡Entra ahora si quieres aceptarlo!`);
+  }
+ 
+  errEl.textContent = '';
+  formVacanteVisible = false;
+  await loadGlobal();
+  await renderVacantes();
+}
+ 
+async function cancelarVacante(id) {
+  if (!confirm('¿Cancelar esta vacante?')) return;
+  await sb.from('vacantes').update({ estado: 'cancelada' }).eq('id', id);
+  await renderVacantes();
+}
+ 
+// ═══════════════════════════════════════════
+//  TRABAJOS DISPONIBLES (Trabajador/Encargado)
+// ═══════════════════════════════════════════
+async function renderTrabajosDisponibles() {
+  const { data } = await sb.from('vacantes').select('*')
+    .eq('estado','abierta')
+    .contains('empleados_invitados', [ME.id])
+    .order('creado_en',{ascending:false});
+  const vacantes = data || [];
+ 
+  $('pageContent').innerHTML = `
+    <div class="page-header"><div><h2>📢 Trabajos disponibles</h2><p>Vacantes abiertas para ti — el primero en aceptar se queda con el trabajo</p></div></div>
+    ${vacantes.length === 0
+      ? '<div class="card"><div class="empty-state"><div class="empty-icon">📭</div><p>No tienes trabajos disponibles por el momento.</p></div></div>'
+      : vacantes.map(v => {
+          const casa = v.casa_id ? casas.find(c=>c.id===v.casa_id) : null;
+          return `
+            <div class="card">
+              <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+                <div>
+                  <div style="font-size:15px;font-weight:600">${v.descripcion}</div>
+                  <div class="task-meta" style="margin-top:6px">
+                    ${tipoBadge(v.tipo_trabajo)}
+                    ${casa?`<span style="font-size:12px;color:var(--cyan)">🏠 ${casa.nombre} — ${casa.direccion}</span>`:''}
+                  </div>
+                  <div class="task-meta" style="margin-top:6px">
+                    <span class="task-amount" style="font-size:14px">${fmtMoney(v.monto)}</span>
+                    ${v.fecha_inicio?`<span class="task-date">🟢 Inicio: ${fmtDate(v.fecha_inicio)}</span>`:''}
+                    ${v.fecha_limite?`<span class="task-date">🏁 Límite: ${fmtDate(v.fecha_limite)}</span>`:''}
+                  </div>
+                  ${v.notas?`<div style="font-size:12px;color:var(--text3);margin-top:6px">📌 ${v.notas}</div>`:''}
+                </div>
+              </div>
+              <button class="btn btn-primary btn-full" style="margin-top:12px" onclick="aceptarVacante(${v.id})">✋ Aceptar este trabajo</button>
+            </div>`;
+        }).join('')}`;
+}
+ 
+async function aceptarVacante(id) {
+  if (!confirm('¿Aceptar este trabajo? Una vez aceptado quedará asignado a ti.')) return;
+ 
+  // Update condicional: solo si sigue abierta. Si otro ya la tomó, esto no afecta filas.
+  const { data: updated, error } = await sb.from('vacantes')
+    .update({ estado: 'tomada', empleado_aceptado: ME.id, aceptada_en: new Date().toISOString() })
+    .eq('id', id)
+    .eq('estado', 'abierta')
+    .select();
+ 
+  if (error) { alert('Error: '+error.message); return; }
+ 
+  if (!updated || updated.length === 0) {
+    alert('😕 Este trabajo ya fue tomado por otro compañero.');
+    await renderTrabajosDisponibles();
+    return;
+  }
+ 
+  const v = updated[0];
+ 
+  // Crear la tarea real
+  const { data: nuevaTarea, error: errTarea } = await sb.from('tareas').insert({
+    descripcion: v.descripcion, rol: v.tipo_trabajo, tipo_trabajo: v.tipo_trabajo,
+    empleado_id: ME.id, monto: v.monto, fecha_limite: v.fecha_limite,
+    notas: v.notas, asignado_por: v.creado_por, casa_id: v.casa_id,
+  }).select().single();
+ 
+  if (!errTarea && nuevaTarea) {
+    await sb.from('vacantes').update({ tarea_id: nuevaTarea.id }).eq('id', id);
+  }
+ 
+  // Notificar a todos los admins
+  const admins = empleados.filter(e=>e.rol==='admin');
+  const casaNombre = v.casa_id ? (casas.find(c=>c.id===v.casa_id)?.nombre || '') : '';
+  for (const admin of admins) {
+    await sendNotification(admin.id, '✅ Trabajo aceptado', `${ME.nombre} aceptó: ${v.descripcion}${casaNombre?' · '+casaNombre:''}`);
+  }
+ 
+  alert('🎉 ¡Trabajo aceptado! Ya quedó en tus tareas.');
+  await loadGlobal();
+  await renderTrabajosDisponibles();
 }
