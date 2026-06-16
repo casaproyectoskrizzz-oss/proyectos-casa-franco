@@ -117,6 +117,14 @@ function taskBadge(t) {
 }
 function empName(id) { const e = empleados.find(e=>e.id===id); return e ? e.nombre : '—'; }
 function casaNombre(id) { const c = casas.find(c=>c.id===id); return c ? c.nombre : '—'; }
+function fechasCasaHTML(casa) {
+  if (!casa || (!casa.fecha_inicio && !casa.fecha_fin)) return '';
+  return `<div style="font-size:11px;color:var(--text3);margin-top:2px">
+    ${casa.fecha_inicio?`🟢 Inicio: ${fmtDate(casa.fecha_inicio)}`:''}
+    ${casa.fecha_inicio&&casa.fecha_fin?' · ':''}
+    ${casa.fecha_fin?`🏁 Culminación: ${fmtDate(casa.fecha_fin)}`:''}
+  </div>`;
+}
  
 // ═══════════════════════════════════════════
 //  AUTH
@@ -764,7 +772,10 @@ function renderTareasAgrupadas(tareas) {
     return `
       <div class="card">
         <div style="cursor:pointer;display:flex;align-items:center;justify-content:space-between" onclick="toggleTareasCasaAcordeon('${key}')">
-          <div class="card-title" style="margin:0">${abierto?'▾':'▸'} ${titulo}</div>
+          <div>
+            <div class="card-title" style="margin:0">${abierto?'▾':'▸'} ${titulo}</div>
+            ${fechasCasaHTML(casa)}
+          </div>
           <span style="font-size:12px;color:var(--text2)">${done}/${ts.length} completas</span>
         </div>
         ${abierto ? `<div class="task-list" style="margin-top:12px">${ts.map(t=>renderTaskItem(t,true,true)).join('')}</div>` : ''}
@@ -923,6 +934,8 @@ function renderTaskItem(t, canDelete=false, showTipo=false) {
 let misTareasCasaAbierta = null;
  
 async function renderMisTareas() {
+  const { data: casasFrescas } = await sb.from('casas').select('*').order('creado_en',{ascending:false});
+  casas = casasFrescas || [];
   const { data } = await sb.from('tareas').select('*').eq('empleado_id',ME.id).order('creado_en',{ascending:false});
   const mis  = data || [];
   const done = mis.filter(t=>t.done).length;
@@ -969,7 +982,10 @@ async function renderMisTareas() {
           return `
             <div class="card">
               <div style="cursor:pointer;display:flex;align-items:center;justify-content:space-between" onclick="toggleMisTareasAcordeon('${key}')">
-                <div class="card-title" style="margin:0">${abierto?'▾':'▸'} ${titulo}</div>
+                <div>
+                  <div class="card-title" style="margin:0">${abierto?'▾':'▸'} ${titulo}</div>
+                  ${fechasCasaHTML(casa)}
+                </div>
                 <span style="font-size:12px;color:var(--text2)">${doneCasa}/${ts.length} completas</span>
               </div>
               ${abierto ? `
