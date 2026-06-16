@@ -221,6 +221,29 @@ async function goTo(pageId) {
 }
  
 // ── MOBILE SIDEBAR ─────────────────────────
+function showConfirm(msg, title='¿Confirmar acción?') {
+  return new Promise((resolve) => {
+    $('confirmTitle').textContent = title;
+    $('confirmMsg').textContent = msg;
+    $('confirmOverlay').classList.add('open');
+ 
+    const okBtn = $('confirmOkBtn');
+    const cancelBtn = $('confirmCancelBtn');
+ 
+    function cleanup(result) {
+      $('confirmOverlay').classList.remove('open');
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      resolve(result);
+    }
+    function onOk() { cleanup(true); }
+    function onCancel() { cleanup(false); }
+ 
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+  });
+}
+ 
 function showToast(msg, type='success', icon=null) {
   const icons = { success: '✅', error: '⚠️', warn: '⏳' };
   const el = document.createElement('div');
@@ -1811,7 +1834,8 @@ async function renderTrabajosDisponibles() {
 }
  
 async function aceptarVacante(id) {
-  if (!confirm('¿Aceptar este trabajo? Una vez aceptado quedará asignado a ti.')) return;
+  const ok = await showConfirm('Una vez aceptado quedará asignado a ti.', '¿Aceptar este trabajo?');
+  if (!ok) return;
  
   // Update condicional: solo si sigue abierta. Si otro ya la tomó, esto no afecta filas.
   const { data: updated, error } = await sb.from('vacantes')
@@ -1851,5 +1875,5 @@ async function aceptarVacante(id) {
  
   showToast('¡Trabajo aceptado! Ya quedó en tus tareas.', 'success', '🎉');
   await loadGlobal();
-  await renderTrabajosDisponibles();
+  await goTo('mis-tareas');
 }
