@@ -1152,6 +1152,7 @@ async function renderMisPagos() {
                <div>
                  <div style="font-weight:600;color:var(--green)">${fmtMoney(ab.monto)}</div>
                  <div style="font-size:11px;color:var(--text3)">${fmtDate(ab.fecha)}${ab.notas?' · '+ab.notas:''}</div>
+                 ${ab.comprobante_url?`<a href="${ab.comprobante_url}" target="_blank" style="font-size:11px;color:var(--cyan)">📎 Ver comprobante</a>`:''}
                </div>
              </div>`).join('')}`}
     </div>
@@ -1253,6 +1254,7 @@ async function renderEquipo() {
                       <div class="field"><label>Fecha</label><input type="date" id="abFecha_${w.id}" value="${new Date().toISOString().slice(0,10)}" /></div>
                     </div>
                     <div class="field"><label>Notas (opcional)</label><input type="text" id="abNotas_${w.id}" placeholder="Pago en efectivo, transferencia..." /></div>
+                    <div class="field"><label>Comprobante (foto o PDF, opcional)</label><input type="file" id="abComprobante_${w.id}" accept="image/*,application/pdf" /></div>
                     <div id="abError_${w.id}" class="error-msg"></div>
                     <button class="btn btn-primary btn-sm" onclick="event.stopPropagation();registrarAbono('${w.id}')">＋ Registrar abono</button>
                   </div>
@@ -1266,6 +1268,7 @@ async function renderEquipo() {
                         <div>
                           <div style="font-weight:600;color:var(--green)">${fmtMoney(ab.monto)}</div>
                           <div style="font-size:11px;color:var(--text3)">${fmtDate(ab.fecha)}${ab.notas?' · '+ab.notas:''}</div>
+                          ${ab.comprobante_url?`<a href="${ab.comprobante_url}" target="_blank" style="font-size:11px;color:var(--cyan)" onclick="event.stopPropagation()">📎 Ver comprobante</a>`:''}
                         </div>
                         ${ME.rol==='admin'?`<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();eliminarAbono(${ab.id},'${w.id}')">🗑</button>`:''}
                       </div>`).join('')}
@@ -1290,16 +1293,31 @@ async function registrarAbono(empId) {
   const monto = Number($('abMonto_'+empId).value)||0;
   const fecha = $('abFecha_'+empId).value;
   const notas = $('abNotas_'+empId).value.trim();
+  const fileInput = $('abComprobante_'+empId);
+  const file = fileInput && fileInput.files[0];
   const errEl = $('abError_'+empId);
  
   if (monto <= 0) { errEl.textContent = 'Ingresa un monto válido'; return; }
   if (!fecha) { errEl.textContent = 'Selecciona una fecha'; return; }
  
+  let comprobanteUrl = null;
+  if (file) {
+    errEl.style.color = 'var(--text2)';
+    errEl.textContent = 'Subiendo comprobante...';
+    const filePath = `abonos/${empId}/${Date.now()}_${file.name}`;
+    const { error: uploadError } = await sb.storage.from('documentos').upload(filePath, file);
+    if (uploadError) { errEl.style.color='var(--red)'; errEl.textContent = 'Error subiendo comprobante: '+uploadError.message; return; }
+    const { data: urlData } = sb.storage.from('documentos').getPublicUrl(filePath);
+    comprobanteUrl = urlData.publicUrl;
+  }
+ 
   const { error } = await sb.from('abonos_pago').insert({
     empleado_id: empId, monto, fecha, notas: notas||null, registrado_por: ME.id,
+    comprobante_url: comprobanteUrl,
   });
-  if (error) { errEl.textContent = 'Error: '+error.message; return; }
+  if (error) { errEl.style.color='var(--red)'; errEl.textContent = 'Error: '+error.message; return; }
  
+  errEl.style.color = '';
   errEl.textContent = '';
   await renderEquipo();
 }
@@ -1313,9 +1331,12 @@ async function eliminarAbono(abonoId, empId) {
 // ═══════════════════════════════════════════
 //  COTIZACIÓN
 // ═══════════════════════════════════════════
+let cotizacionAbierta = null;
+let cotizacionesLista = [];
+ 
 async function renderCotizacion() {
   const { data } = await sb.from('cotizaciones').select('*').order('creado_en',{ascending:false}).limit(5);
-  const lista = data||[];
+  cotizacionesLista = data||[];
   materiales = []; // reinicia la lista cada vez que entras a la página
  
   $('pageContent').innerHTML = `
@@ -1378,18 +1399,48 @@ async function renderCotizacion() {
       <div class="card-title">📄 Resultado</div>
       <div id="cotBody"></div>
     </div>
-    ${lista.length?`
-      <div class="card">
-        <div class="card-title">🕐 Cotizaciones anteriores</div>
-        ${lista.map(c=>`
-          <div class="cot-row">
-            <div>
-              <div style="font-weight:600;color:var(--cyan)">${c.direccion||'Sin dirección'}</div>
-              <div style="font-size:11px;color:var(--text3)">${new Date(c.creado_en).toLocaleDateString('es-MX',{day:'2-digit',month:'long',year:'numeric'})}</div>
-            </div>
-            <span style="font-weight:700;color:var(--cyan)">${fmtMoney(c.total)}</span>
-          </div>`).join('')}
-      </div>` : ''}`;
+    ${cotizacionesLista.length?`<div class="card" id="cotizacionesAnterioresWrap">${renderCotizacionesAnterioresInner()}</div>` : ''}`;
+}
+ 
+function renderCotizacionesAnterioresInner() {
+  if (!cotizacionesLista.length) return '';
+  return `
+    <div class="card-title">🕐 Cotizaciones anteriores</div>
+    ${cotizacionesLista.map(c => {
+      const abierta = cotizacionAbierta === c.id;
+      const mats = c.materiales_detalle || [];
+      return `
+        <div class="cot-row" style="cursor:pointer" onclick="toggleCotizacionAcordeon(${c.id})">
+          <div>
+            <div style="font-weight:600;color:var(--cyan)">${abierta?'▾':'▸'} ${c.direccion||'Sin dirección'}</div>
+            <div style="font-size:11px;color:var(--text3)">${new Date(c.creado_en).toLocaleDateString('es-MX',{day:'2-digit',month:'long',year:'numeric'})}</div>
+          </div>
+          <span style="font-weight:700;color:var(--cyan)">${fmtMoney(c.total)}</span>
+        </div>
+        ${abierta ? `
+          <div style="background:var(--bg3);border-radius:var(--radius);padding:12px;margin:0 0 10px">
+            ${(c.habitaciones||c.banos||c.area) ? `<div style="font-size:12px;color:var(--text3);margin-bottom:8px">${c.habitaciones?c.habitaciones+' hab':''}${c.habitaciones&&c.banos?' · ':''}${c.banos?c.banos+' baños':''}${(c.habitaciones||c.banos)&&c.area?' · ':''}${c.area?c.area+' m²':''}</div>` : ''}
+            <div class="cot-row"><span>🎨 Pintura</span><span class="cot-val">${fmtMoney(c.costo_pintura)}</span></div>
+            <div class="cot-row"><span>🔧 Técnico</span><span class="cot-val">${fmtMoney(c.costo_tecnico)}</span></div>
+            <div class="cot-row"><span>🧹 Limpieza</span><span class="cot-val">${fmtMoney(c.costo_limpieza)}</span></div>
+            <div class="cot-row"><span>👁 Supervisión</span><span class="cot-val">${fmtMoney(c.costo_encargado)}</span></div>
+            <div class="cot-row"><span>🔩 Materiales (${mats.length} items)</span><span class="cot-val">${fmtMoney(c.materiales)}</span></div>
+            <div class="cot-row"><span>Subtotal</span><span class="cot-val">${fmtMoney(c.subtotal)}</span></div>
+            <div class="cot-row"><span>Margen (${c.margen}%)</span><span class="cot-val">${fmtMoney(c.admin_fee)}</span></div>
+            <div class="cot-row total"><span>TOTAL</span><span>${fmtMoney(c.total)}</span></div>
+            ${mats.length ? `
+              <div class="section-label" style="margin-top:8px">Detalle de materiales</div>
+              ${mats.map(m=>`<div class="cot-row"><span>${m.nombre} (${m.cantidad}×)</span><span class="cot-val">${fmtMoney(m.precio*m.cantidad)}</span></div>`).join('')}
+            ` : ''}
+          </div>
+        ` : ''}`;
+    }).join('')}`;
+}
+ 
+function toggleCotizacionAcordeon(id) {
+  cotizacionAbierta = cotizacionAbierta === id ? null : id;
+  const wrap = $('cotizacionesAnterioresWrap');
+  if (wrap) wrap.innerHTML = renderCotizacionesAnterioresInner();
 }
  
 function onCasaCotSelect(sel) {
@@ -1462,7 +1513,7 @@ async function calcCotizacion() {
     habitaciones: $('cHab').value||null, banos: $('cBan').value||null,
     costo_pintura: pintura, costo_tecnico: tecnico,
     costo_limpieza: limpieza, costo_encargado: supervision,
-    materiales: mat, margen, subtotal: sub, admin_fee: fee, total,
+    materiales: mat, materiales_detalle: materiales, margen, subtotal: sub, admin_fee: fee, total,
     creado_por: ME.id,
   });
  
