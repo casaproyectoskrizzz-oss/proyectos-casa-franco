@@ -238,7 +238,7 @@ strong{font-weight:600}
 .flex-center{display:flex;align-items:center}
 .gap-1{gap:.5rem}
 .gap-2{gap:1rem}
-.w-full{width:100%}
+.w-full{width:100%} 
  
 /* ── MOBILE EXTRA ── */
 @media (max-width: 480px) {
