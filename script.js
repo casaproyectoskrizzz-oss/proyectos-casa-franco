@@ -920,6 +920,8 @@ function renderTaskItem(t, canDelete=false, showTipo=false) {
 // ═══════════════════════════════════════════
 //  MIS TAREAS
 // ═══════════════════════════════════════════
+let misTareasCasaAbierta = null;
+ 
 async function renderMisTareas() {
   const { data } = await sb.from('tareas').select('*').eq('empleado_id',ME.id).order('creado_en',{ascending:false});
   const mis  = data || [];
@@ -961,20 +963,35 @@ async function renderMisTareas() {
       : Object.entries(porCasa).map(([key,ts])=>{
           const casa = key!=='sin-casa' ? casas.find(c=>c.id===Number(key)) : null;
           const docs = casa ? (docsPorCasa[casa.id]||[]) : [];
+          const titulo = casa ? `🏠 ${casa.nombre} — ${casa.direccion}` : '📋 Sin propiedad';
+          const doneCasa = ts.filter(t=>t.done).length;
+          const abierto = misTareasCasaAbierta === key;
           return `
             <div class="card">
-              <div class="card-title">${casa?`🏠 ${casa.nombre} — ${casa.direccion}`:'📋 Sin propiedad'}</div>
-              ${docs.length ? `
-                <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">
-                  ${docs.map(d=>`
-                    <a href="${d.url_archivo}" target="_blank" class="btn btn-sm" style="justify-content:flex-start">📄 ${d.nombre_archivo}</a>
-                  `).join('')}
+              <div style="cursor:pointer;display:flex;align-items:center;justify-content:space-between" onclick="toggleMisTareasAcordeon('${key}')">
+                <div class="card-title" style="margin:0">${abierto?'▾':'▸'} ${titulo}</div>
+                <span style="font-size:12px;color:var(--text2)">${doneCasa}/${ts.length} completas</span>
+              </div>
+              ${abierto ? `
+                <div style="margin-top:12px">
+                  ${docs.length ? `
+                    <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">
+                      ${docs.map(d=>`
+                        <a href="${d.url_archivo}" target="_blank" class="btn btn-sm" style="justify-content:flex-start" onclick="event.stopPropagation()">📄 ${d.nombre_archivo}</a>
+                      `).join('')}
+                    </div>
+                    <hr class="divider" style="margin:0 0 12px">
+                  ` : ''}
+                  <div class="task-list">${ts.map(t=>renderTaskItem(t,false,true)).join('')}</div>
                 </div>
-                <hr class="divider" style="margin:0 0 12px">
               ` : ''}
-              <div class="task-list">${ts.map(t=>renderTaskItem(t,false,true)).join('')}</div>
             </div>`;
         }).join('')}`;
+}
+ 
+function toggleMisTareasAcordeon(key) {
+  misTareasCasaAbierta = misTareasCasaAbierta === key ? null : key;
+  renderMisTareas();
 }
  
 // ═══════════════════════════════════════════
