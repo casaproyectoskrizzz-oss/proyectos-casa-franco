@@ -37,7 +37,16 @@
 </div>
 
 <div id="toastContainer"></div>
-
+<div id="confirmOverlay">
+  <div class="confirm-modal">
+    <div class="confirm-title" id="confirmTitle">¿Confirmar acción?</div>
+    <div class="confirm-msg" id="confirmMsg"></div>
+    <div class="confirm-actions">
+      <button class="btn" id="confirmCancelBtn">Cancelar</button>
+      <button class="btn btn-primary" id="confirmOkBtn">Confirmar</button>
+    </div>
+  </div>
+</div>
 <div id="mainApp" class="hidden">
   <div class="sidebar-overlay" id="overlay" onclick="closeSidebar()"></div>
   <div class="mobile-header">
