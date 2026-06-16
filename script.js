@@ -7,45 +7,46 @@ const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsI
 const OS_APP_ID = '4ed3441f-9cee-4358-8f8b-4f48e20077af';
 const OS_API_KEY = 'os_v2_app_j3juih445zbvrd4lj5eoeadxv6lp5ajbmb6emyvdzyznrxwy56qhhvxgsmzipdysi77gruhmdc3vu4ylbphyfsr7ycp7ypixh4t3ady';
  
+// ── ONESIGNAL ──────────────────────────────
+window.OneSignalDeferred = window.OneSignalDeferred || [];
+ 
 let sb;
 window.addEventListener('load', function() {
   sb = window.supabase.createClient(SUPA_URL, SUPA_KEY);
   initOneSignal();
 });
  
-// ── ONESIGNAL ──────────────────────────────
 async function initOneSignal() {
-  try {
-    await window.OneSignalDeferred?.push(async function(os) {
-      await os.init({
+  window.OneSignalDeferred.push(async function(OneSignal) {
+    try {
+      await OneSignal.init({
         appId: OS_APP_ID,
-        notifyButton: { enable: false },
         allowLocalhostAsSecureOrigin: true,
+        notifyButton: { enable: false },
       });
-      await os.Notifications.requestPermission();
-      const osId = await os.User.PushSubscription.id;
-      if (osId && ME) {
-        await sb.from('push_tokens').upsert({
-          empleado_id: ME.id,
-          onesignal_id: osId,
-        }, { onConflict: 'empleado_id,onesignal_id' });
-      }
-    });
-  } catch(e) { console.log('OneSignal:', e); }
+    } catch(e) { console.log('OneSignal init error:', e); }
+  });
 }
  
-async function saveOSToken() {
-  try {
-    await window.OneSignalDeferred?.push(async function(os) {
-      const osId = await os.User.PushSubscription.id;
+async function pedirPermisoYGuardarToken() {
+  window.OneSignalDeferred.push(async function(OneSignal) {
+    try {
+      const permission = await OneSignal.Notifications.permission;
+      if (!permission) {
+        await OneSignal.Notifications.requestPermission();
+      }
+      const osId = OneSignal.User.PushSubscription.id;
       if (osId && ME) {
         await sb.from('push_tokens').upsert({
           empleado_id: ME.id,
           onesignal_id: osId,
         }, { onConflict: 'empleado_id,onesignal_id' });
+        console.log('Token guardado:', osId);
+      } else {
+        console.log('Sin osId todavía. Permiso:', permission);
       }
-    });
-  } catch(e) {}
+    } catch(e) { console.log('Error guardando token:', e); }
+  });
 }
  
 async function sendNotification(empleadoId, titulo, mensaje) {
@@ -137,7 +138,7 @@ async function doLogin() {
     $('mainApp').classList.remove('hidden');
     $('loginError').textContent = '';
     initApp();
-    saveOSToken();
+    pedirPermisoYGuardarToken();
   }
 }
  
@@ -278,6 +279,8 @@ async function renderResumen() {
 // ═══════════════════════════════════════════
 //  CASAS
 // ═══════════════════════════════════════════
+let casaAbierta = null; // id de la casa actualmente expandida en el acordeón
+ 
 async function renderCasas() {
   await loadGlobal();
   const { data: tareas } = await sb.from('tareas').select('*');
@@ -294,6 +297,10 @@ async function renderCasas() {
         <div class="field"><label>Nombre</label><input type="text" id="cNombre" placeholder="Casa Familia García" /></div>
         <div class="field"><label>Dirección</label><input type="text" id="cDireccion" placeholder="8409 W 108th St" /></div>
       </div>
+      <div class="form-row">
+        <div class="field"><label>Fecha de inicio</label><input type="date" id="cFechaInicio" /></div>
+        <div class="field"><label>Fecha de culminación</label><input type="date" id="cFechaFin" /></div>
+      </div>
       <div class="field"><label>Descripción (opcional)</label><input type="text" id="cDescripcion" placeholder="Casa de 2 niveles..." /></div>
       <div id="casaError" class="error-msg"></div>
       <div style="display:flex;gap:8px">
@@ -309,30 +316,70 @@ async function renderCasas() {
           const pct = ct.length ? Math.round(cd/ct.length*100) : 0;
           const total = ct.reduce((a,t)=>a+Number(t.monto),0);
           const ganado = ct.filter(t=>t.done).reduce((a,t)=>a+Number(t.monto),0);
+          const abierta = casaAbierta === casa.id;
           return `
             <div class="card">
-              <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
-                <div>
-                  <div style="font-size:16px;font-weight:600;color:var(--cyan)">🏠 ${casa.nombre}</div>
-                  <div style="font-size:12px;color:var(--text2);margin-top:3px">📍 ${casa.direccion}</div>
-                  ${casa.descripcion?`<div style="font-size:12px;color:var(--text3);margin-top:2px">${casa.descripcion}</div>`:''}
+              <div style="cursor:pointer" onclick="toggleCasaAcordeon(${casa.id})">
+                <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+                  <div>
+                    <div style="font-size:16px;font-weight:600;color:var(--cyan)">${abierta?'▾':'▸'} 🏠 ${casa.nombre}</div>
+                    <div style="font-size:12px;color:var(--text2);margin-top:3px">📍 ${casa.direccion}</div>
+                    ${(casa.fecha_inicio||casa.fecha_fin) ? `
+                      <div style="font-size:11px;color:var(--text3);margin-top:2px">
+                        ${casa.fecha_inicio?`🟢 Inicio: ${fmtDate(casa.fecha_inicio)}`:''}
+                        ${casa.fecha_inicio&&casa.fecha_fin?' · ':''}
+                        ${casa.fecha_fin?`🏁 Culminación: ${fmtDate(casa.fecha_fin)}`:''}
+                      </div>` : ''}
+                  </div>
+                  <div style="font-size:13px;color:var(--text2)">${pct}%</div>
                 </div>
-                <div style="display:flex;gap:6px;flex-wrap:wrap">
-                  <button class="btn btn-sm btn-primary" onclick="goToTareasCasa(${casa.id})">＋ Asignar tarea</button>
-                  <button class="btn btn-sm" onclick="verReporteCasa(${casa.id})">📄 Reporte</button>
-                  ${ME.rol==='admin'?`<button class="btn btn-sm btn-danger" onclick="deleteCasa(${casa.id})">🗑</button>`:''}
+                <div class="progress-bar" style="margin-top:10px"><div class="progress-fill" style="width:${pct}%"></div></div>
+              </div>
+ 
+              ${abierta ? `
+                <div style="margin-top:14px">
+                  ${casa.descripcion?`<div style="font-size:12px;color:var(--text3);margin-bottom:10px">${casa.descripcion}</div>`:''}
+                  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
+                    <button class="btn btn-sm btn-primary" onclick="event.stopPropagation();goToTareasCasa(${casa.id})">＋ Asignar tarea</button>
+                    <button class="btn btn-sm" onclick="event.stopPropagation();verReporteCasa(${casa.id})">📄 Reporte</button>
+                    ${ME.rol==='admin'?`<button class="btn btn-sm" onclick="event.stopPropagation();showFormEditarCasa(${casa.id})">✏ Editar</button>`:''}
+                    ${ME.rol==='admin'?`<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deleteCasa(${casa.id})">🗑</button>`:''}
+                  </div>
+                  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+                    <div class="stat-card"><div class="stat-num" style="font-size:18px">${ct.length}</div><div class="stat-lbl">Tareas</div></div>
+                    <div class="stat-card stat-green"><div class="stat-num" style="font-size:18px">${cd}</div><div class="stat-lbl">Listas</div></div>
+                    <div class="stat-card stat-cyan"><div class="stat-num" style="font-size:14px">${fmtMoney(ganado)}</div><div class="stat-lbl">Pagado</div></div>
+                    <div class="stat-card stat-amber"><div class="stat-num" style="font-size:14px">${fmtMoney(total-ganado)}</div><div class="stat-lbl">Pendiente</div></div>
+                  </div>
+                  <div id="formEditarCasa_${casa.id}" class="hidden" style="margin-top:12px;background:var(--bg3);border-radius:var(--radius);padding:12px">
+                    <div class="form-row">
+                      <div class="field"><label>Fecha de inicio</label><input type="date" id="eFechaInicio_${casa.id}" value="${casa.fecha_inicio||''}" /></div>
+                      <div class="field"><label>Fecha de culminación</label><input type="date" id="eFechaFin_${casa.id}" value="${casa.fecha_fin||''}" /></div>
+                    </div>
+                    <button class="btn btn-primary btn-sm" onclick="event.stopPropagation();guardarFechasCasa(${casa.id})">Guardar fechas</button>
+                  </div>
                 </div>
-              </div>
-              <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">
-                <div class="stat-card"><div class="stat-num" style="font-size:18px">${ct.length}</div><div class="stat-lbl">Tareas</div></div>
-                <div class="stat-card stat-green"><div class="stat-num" style="font-size:18px">${cd}</div><div class="stat-lbl">Listas</div></div>
-                <div class="stat-card stat-cyan"><div class="stat-num" style="font-size:14px">${fmtMoney(ganado)}</div><div class="stat-lbl">Pagado</div></div>
-                <div class="stat-card stat-amber"><div class="stat-num" style="font-size:14px">${fmtMoney(total-ganado)}</div><div class="stat-lbl">Pendiente</div></div>
-              </div>
-              <div class="progress-label"><span>Progreso</span><span>${pct}%</span></div>
-              <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
+              ` : ''}
             </div>`;
         }).join('')}`;
+}
+ 
+function toggleCasaAcordeon(id) {
+  casaAbierta = casaAbierta === id ? null : id;
+  renderCasas();
+}
+ 
+function showFormEditarCasa(id) {
+  const el = $('formEditarCasa_'+id);
+  el.classList.toggle('hidden');
+}
+ 
+async function guardarFechasCasa(id) {
+  const fi = $('eFechaInicio_'+id).value || null;
+  const ff = $('eFechaFin_'+id).value || null;
+  await sb.from('casas').update({ fecha_inicio: fi, fecha_fin: ff }).eq('id', id);
+  await loadGlobal();
+  await renderCasas();
 }
  
 function showFormCasa() { $('formCasa').classList.remove('hidden'); $('cNombre').focus(); }
@@ -342,9 +389,14 @@ async function addCasa() {
   const nombre = $('cNombre').value.trim();
   const dir    = $('cDireccion').value.trim();
   const desc   = $('cDescripcion').value.trim();
+  const fi     = $('cFechaInicio').value || null;
+  const ff     = $('cFechaFin').value || null;
   if (!nombre) { $('casaError').textContent = 'Escribe el nombre'; return; }
   if (!dir)    { $('casaError').textContent = 'Escribe la dirección'; return; }
-  const { error } = await sb.from('casas').insert({ nombre, direccion: dir, descripcion: desc||null, creado_por: ME.id });
+  const { error } = await sb.from('casas').insert({
+    nombre, direccion: dir, descripcion: desc||null,
+    fecha_inicio: fi, fecha_fin: ff, creado_por: ME.id
+  });
   if (error) { $('casaError').textContent = 'Error: '+error.message; return; }
   await loadGlobal();
   hideFormCasa();
@@ -687,12 +739,42 @@ async function renderTareas(preselectCasaId=null) {
         <button class="btn" onclick="hideFormTarea()">Cancelar</button>
       </div>
     </div>
-    <div class="card">
-      <div class="card-title">Lista de tareas (${tareas.length})</div>
-      ${tareas.length===0
-        ? '<div class="empty-state"><div class="empty-icon">📋</div><p>No hay tareas aún.</p></div>'
-        : `<div class="task-list">${tareas.map(t=>renderTaskItem(t,true,true)).join('')}</div>`}
-    </div>`;
+    ${renderTareasAgrupadas(tareas)}`;
+}
+ 
+let casaTareasAbierta = null; // id de casa expandida en el acordeón de Tareas (o 'sin-casa')
+ 
+function renderTareasAgrupadas(tareas) {
+  if (tareas.length === 0) {
+    return '<div class="card"><div class="empty-state"><div class="empty-icon">📋</div><p>No hay tareas aún.</p></div></div>';
+  }
+ 
+  const grupos = {};
+  tareas.forEach(t => {
+    const key = t.casa_id || 'sin-casa';
+    if (!grupos[key]) grupos[key] = [];
+    grupos[key].push(t);
+  });
+ 
+  return Object.entries(grupos).map(([key, ts]) => {
+    const casa = key !== 'sin-casa' ? casas.find(c=>c.id===Number(key)) : null;
+    const titulo = casa ? `🏠 ${casa.nombre} — ${casa.direccion}` : '📋 Sin propiedad';
+    const done = ts.filter(t=>t.done).length;
+    const abierto = casaTareasAbierta === key;
+    return `
+      <div class="card">
+        <div style="cursor:pointer;display:flex;align-items:center;justify-content:space-between" onclick="toggleTareasCasaAcordeon('${key}')">
+          <div class="card-title" style="margin:0">${abierto?'▾':'▸'} ${titulo}</div>
+          <span style="font-size:12px;color:var(--text2)">${done}/${ts.length} completas</span>
+        </div>
+        ${abierto ? `<div class="task-list" style="margin-top:12px">${ts.map(t=>renderTaskItem(t,true,true)).join('')}</div>` : ''}
+      </div>`;
+  }).join('');
+}
+ 
+function toggleTareasCasaAcordeon(key) {
+  casaTareasAbierta = casaTareasAbierta === key ? null : key;
+  renderTareas();
 }
  
 function onTipoChange(sel) {
