@@ -5,7 +5,7 @@
 const SUPA_URL = 'https://wiewpmkgsbsxgwljnhmu.supabase.co';
 const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndpZXdwbWtnc2JzeGd3bGpuaG11Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE1Mjk3MjUsImV4cCI6MjA5NzEwNTcyNX0.UxfZBpVwkWvGNsJpx3BnJxM9NHMF76-A3lYTIfIU8GM';
 const OS_APP_ID = '4ed3441f-9cee-4358-8f8b-4f48e20077af';
-const OS_API_KEY = 'os_v2_app_j3juih445zbvrd4lj5eoeadxv6lp5ajbmb6emyvdzyznrxwy56qhhvxgsmzipdysi77gruhmdc3vu4ylbphyfsr7ycp7ypixh4t3ady';
+// La API Key de OneSignal ya no vive aquí — está protegida en la Edge Function de Supabase
  
 // ── ONESIGNAL ──────────────────────────────
 window.OneSignalDeferred = window.OneSignalDeferred || [];
@@ -66,20 +66,29 @@ async function sendNotification(empleadoId, titulo, mensaje) {
       .select('onesignal_id').eq('empleado_id', empleadoId);
     if (!tokens || tokens.length === 0) return;
     const ids = tokens.map(t => t.onesignal_id);
-    await fetch('https://api.onesignal.com/notifications', {
+ 
+    const { data: { session } } = await sb.auth.getSession();
+ 
+    const res = await fetch('https://wiewpmkgsbsxgwljnhmu.supabase.co/functions/v1/enviar-notificacion', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Key ${OS_API_KEY}`,
+        'Authorization': `Bearer ${session.access_token}`,
+        'apikey': SUPA_KEY,
       },
       body: JSON.stringify({
-        app_id: OS_APP_ID,
-        include_subscription_ids: ids,
-        headings: { en: titulo },
-        contents: { en: mensaje },
-        small_icon: 'house',
+        subscription_ids: ids,
+        titulo,
+        mensaje,
       }),
     });
+ 
+    const result = await res.json();
+    if (!res.ok || result.error) {
+      console.log('Notif error desde Edge Function:', result.error || result);
+    } else {
+      console.log('Notificación enviada correctamente:', result);
+    }
   } catch(e) { console.log('Notif error:', e); }
 }
  
