@@ -1692,7 +1692,8 @@ async function guardarEdicionVacante(id) {
  
   // Notificar solo a los empleados recién agregados
   if (nuevosInvitados.length) {
-    const casaInfo = casas.find(c => c.id === (await sb.from('vacantes').select('casa_id').eq('id',id).single()).data?.casa_id);
+    const { data: vacanteCasaData } = await sb.from('vacantes').select('casa_id').eq('id', id).single();
+    const casaInfo = casas.find(c => c.id === vacanteCasaData?.casa_id);
     for (const empId of nuevosInvitados) {
       await sendNotification(empId, '📢 Hay un trabajo para ti', `${desc}${casaInfo?' · '+casaInfo.nombre+' — '+casaInfo.direccion:''} · ${fmtMoney(monto)}. ¡Entra ahora si quieres aceptarlo!`);
     }
