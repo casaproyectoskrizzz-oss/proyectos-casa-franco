@@ -1870,7 +1870,10 @@ async function aceptarVacante(id) {
     notas: v.notas, asignado_por: v.creado_por, casa_id: v.casa_id,
   }).select().single();
  
-  if (!errTarea && nuevaTarea) {
+  if (errTarea) {
+    showToast('Trabajo aceptado, pero hubo un problema creando la tarea: '+errTarea.message, 'error');
+    console.log('Error creando tarea desde vacante:', errTarea);
+  } else if (nuevaTarea) {
     await sb.from('vacantes').update({ tarea_id: nuevaTarea.id }).eq('id', id);
   }
  
