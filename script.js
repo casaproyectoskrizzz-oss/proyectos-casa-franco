@@ -221,6 +221,18 @@ async function goTo(pageId) {
 }
  
 // ── MOBILE SIDEBAR ─────────────────────────
+function showToast(msg, type='success', icon=null) {
+  const icons = { success: '✅', error: '⚠️', warn: '⏳' };
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.innerHTML = `<span class="toast-icon">${icon || icons[type] || 'ℹ️'}</span><span class="toast-msg">${msg}</span><span class="toast-close" onclick="this.parentElement.remove()">✕</span>`;
+  document.getElementById('toastContainer').appendChild(el);
+  setTimeout(() => {
+    el.style.animation = 'toastOut .25s ease forwards';
+    setTimeout(() => el.remove(), 250);
+  }, 4500);
+}
+ 
 function toggleSidebar() {
   $('sidebar').classList.toggle('open');
   $('overlay').classList.toggle('open');
@@ -1575,9 +1587,17 @@ async function renderVacantes() {
  
     ${vacantesCerradas.length ? `
       <div class="card">
-        <div class="card-title">📋 Historial de vacantes</div>
-        ${vacantesCerradas.map(v => renderVacanteCard(v)).join('')}
+        <div style="cursor:pointer;display:flex;align-items:center;justify-content:space-between" onclick="toggleHistorialVacantes()">
+          <div class="card-title" style="margin:0">${historialVacantesAbierto?'▾':'▸'} 📋 Historial de vacantes (${vacantesCerradas.length})</div>
+        </div>
+        ${historialVacantesAbierto ? vacantesCerradas.map(v => renderVacanteCard(v)).join('') : ''}
       </div>` : ''}`;
+}
+ 
+let historialVacantesAbierto = false;
+function toggleHistorialVacantes() {
+  historialVacantesAbierto = !historialVacantesAbierto;
+  renderVacantes();
 }
  
 function renderVacanteCard(v) {
@@ -1588,21 +1608,99 @@ function renderVacanteCard(v) {
     : v.estado==='tomada'
       ? `<span class="badge badge-completa">✓ Tomada por ${empName(v.empleado_aceptado)}</span>`
       : '<span class="badge badge-vencida">Cancelada</span>';
+  const editando = vacanteEditando === v.id;
+  const tipoOptsEdit = Object.entries(TIPOS).map(([k,t])=>`<option value="${k}" ${v.tipo_trabajo===k?'selected':''}>${t.icon} ${t.label}</option>`).join('');
+ 
   return `
-    <div class="task-item">
-      <div class="task-body">
-        <div class="task-name">${v.descripcion}</div>
-        <div class="task-meta">
-          ${tipoBadge(v.tipo_trabajo)}
-          ${casa?`<span style="font-size:11px;color:var(--cyan)">🏠 ${casa.nombre}</span>`:''}
-          <span class="task-amount">${fmtMoney(v.monto)}</span>
-          ${estadoBadge}
-          ${v.fecha_limite?`<span class="task-date">📅 ${fmtDate(v.fecha_limite)}</span>`:''}
+    <div class="task-item" style="flex-direction:column;align-items:stretch">
+      <div style="display:flex;gap:12px">
+        <div class="task-body">
+          <div class="task-name">${v.descripcion}</div>
+          <div class="task-meta">
+            ${tipoBadge(v.tipo_trabajo)}
+            ${casa?`<span style="font-size:11px;color:var(--cyan)">🏠 ${casa.nombre} — ${casa.direccion}</span>`:''}
+            <span class="task-amount">${fmtMoney(v.monto)}</span>
+            ${estadoBadge}
+            ${v.fecha_limite?`<span class="task-date">📅 ${fmtDate(v.fecha_limite)}</span>`:''}
+          </div>
+          <div style="font-size:11px;color:var(--text3);margin-top:3px">👥 Invitados: ${invitados||'—'}</div>
         </div>
-        <div style="font-size:11px;color:var(--text3);margin-top:3px">👥 Invitados: ${invitados||'—'}</div>
+        <div class="task-actions" style="flex-shrink:0">
+          ${v.estado==='abierta'?`<button class="btn btn-sm" onclick="toggleEditarVacante(${v.id})">✏</button>`:''}
+          ${v.estado==='abierta'?`<button class="btn btn-sm btn-danger" onclick="cancelarVacante(${v.id})">🗑</button>`:''}
+        </div>
       </div>
-      ${v.estado==='abierta'?`<button class="btn btn-sm btn-danger" onclick="cancelarVacante(${v.id})">🗑</button>`:''}
+ 
+      ${editando ? `
+        <div style="background:var(--bg3);border-radius:var(--radius);padding:12px;margin-top:10px">
+          <div class="form-row">
+            <div class="field"><label>Especificación</label><input type="text" id="evDesc_${v.id}" value="${v.descripcion}" /></div>
+            <div class="field"><label>Tipo de trabajo</label><select id="evTipo_${v.id}">${tipoOptsEdit}</select></div>
+          </div>
+          <div class="form-row">
+            <div class="field"><label>Fecha inicial</label><input type="date" id="evFechaInicio_${v.id}" value="${v.fecha_inicio||''}" /></div>
+            <div class="field"><label>Fecha límite</label><input type="date" id="evFechaLimite_${v.id}" value="${v.fecha_limite||''}" /></div>
+          </div>
+          <div class="field"><label>Pago ($)</label><input type="number" id="evMonto_${v.id}" value="${v.monto}" step="0.01" /></div>
+          <div class="card-title" style="font-size:13px;margin-top:8px">👥 Empleados invitados</div>
+          <div class="checklist-grid">
+            ${empleados.filter(e=>['trabajador','encargado'].includes(e.rol)).map(e=>`
+              <label class="check-item">
+                <input type="checkbox" class="ev-emp-check-${v.id}" value="${e.id}" ${(v.empleados_invitados||[]).includes(e.id)?'checked':''} />
+                <span>${e.nombre}</span>
+              </label>`).join('')}
+          </div>
+          <div id="evError_${v.id}" class="error-msg"></div>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <button class="btn btn-primary btn-sm" onclick="guardarEdicionVacante(${v.id})">Guardar cambios</button>
+            <button class="btn btn-sm" onclick="toggleEditarVacante(${v.id})">Cancelar</button>
+          </div>
+        </div>
+      ` : ''}
     </div>`;
+}
+ 
+let vacanteEditando = null;
+function toggleEditarVacante(id) {
+  vacanteEditando = vacanteEditando === id ? null : id;
+  renderVacantes();
+}
+ 
+async function guardarEdicionVacante(id) {
+  const desc = $('evDesc_'+id).value.trim();
+  const tipo = $('evTipo_'+id).value;
+  const fi = $('evFechaInicio_'+id).value || null;
+  const ff = $('evFechaLimite_'+id).value || null;
+  const monto = Number($('evMonto_'+id).value)||0;
+  const checked = [...document.querySelectorAll(`.ev-emp-check-${id}:checked`)].map(c=>c.value);
+  const errEl = $('evError_'+id);
+ 
+  if (!desc) { errEl.textContent = 'Escribe la especificación'; return; }
+  if (monto <= 0) { errEl.textContent = 'Ingresa un monto válido'; return; }
+  if (!checked.length) { errEl.textContent = 'Selecciona al menos un empleado'; return; }
+ 
+  const { data: vacanteAntes } = await sb.from('vacantes').select('empleados_invitados').eq('id', id).single();
+  const invitadosAntes = vacanteAntes?.empleados_invitados || [];
+  const nuevosInvitados = checked.filter(empId => !invitadosAntes.includes(empId));
+ 
+  const { error } = await sb.from('vacantes').update({
+    descripcion: desc, tipo_trabajo: tipo, fecha_inicio: fi, fecha_limite: ff,
+    monto, empleados_invitados: checked,
+  }).eq('id', id);
+ 
+  if (error) { errEl.textContent = 'Error: '+error.message; return; }
+ 
+  // Notificar solo a los empleados recién agregados
+  if (nuevosInvitados.length) {
+    const casaInfo = casas.find(c => c.id === (await sb.from('vacantes').select('casa_id').eq('id',id).single()).data?.casa_id);
+    for (const empId of nuevosInvitados) {
+      await sendNotification(empId, '📢 Hay un trabajo para ti', `${desc}${casaInfo?' · '+casaInfo.nombre+' — '+casaInfo.direccion:''} · ${fmtMoney(monto)}. ¡Entra ahora si quieres aceptarlo!`);
+    }
+  }
+ 
+  vacanteEditando = null;
+  showToast('Vacante actualizada correctamente', 'success');
+  await renderVacantes();
 }
  
 function toggleFormVacante() {
@@ -1651,9 +1749,14 @@ async function lanzarVacante() {
  
   if (error) { errEl.textContent = 'Error: '+error.message; return; }
  
-  const casaNombre = casas.find(c=>c.id===casaId)?.nombre || (await sb.from('casas').select('nombre').eq('id',casaId).single()).data?.nombre || '';
+  let casaInfoNotif = casas.find(c=>c.id===casaId);
+  if (!casaInfoNotif) {
+    const { data: cd } = await sb.from('casas').select('nombre,direccion').eq('id',casaId).single();
+    casaInfoNotif = cd;
+  }
+  const casaTxtNotif = casaInfoNotif ? `${casaInfoNotif.nombre} — ${casaInfoNotif.direccion}` : '';
   for (const empId of checked) {
-    await sendNotification(empId, '📢 Hay un trabajo para ti', `${desc}${casaNombre?' · '+casaNombre:''} · ${fmtMoney(monto)}. ¡Entra ahora si quieres aceptarlo!`);
+    await sendNotification(empId, '📢 Hay un trabajo para ti', `${desc}${casaTxtNotif?' · '+casaTxtNotif:''} · ${fmtMoney(monto)}. ¡Entra ahora si quieres aceptarlo!`);
   }
  
   errEl.textContent = '';
@@ -1716,10 +1819,10 @@ async function aceptarVacante(id) {
     .eq('estado', 'abierta')
     .select();
  
-  if (error) { alert('Error: '+error.message); return; }
+  if (error) { showToast('Error: '+error.message, 'error'); return; }
  
   if (!updated || updated.length === 0) {
-    alert('😕 Este trabajo ya fue tomado por otro compañero.');
+    showToast('Este trabajo ya fue tomado por otro compañero.', 'warn', '😕');
     await renderTrabajosDisponibles();
     return;
   }
@@ -1739,12 +1842,13 @@ async function aceptarVacante(id) {
  
   // Notificar a todos los admins
   const admins = empleados.filter(e=>e.rol==='admin');
-  const casaNombre = v.casa_id ? (casas.find(c=>c.id===v.casa_id)?.nombre || '') : '';
+  const casaInfo = v.casa_id ? casas.find(c=>c.id===v.casa_id) : null;
+  const casaTxt = casaInfo ? `${casaInfo.nombre} — ${casaInfo.direccion}` : '';
   for (const admin of admins) {
-    await sendNotification(admin.id, '✅ Trabajo aceptado', `${ME.nombre} aceptó: ${v.descripcion}${casaNombre?' · '+casaNombre:''}`);
+    await sendNotification(admin.id, '✅ Trabajo aceptado', `${ME.nombre} aceptó: ${v.descripcion}${casaTxt?' · '+casaTxt:''}`);
   }
  
-  alert('🎉 ¡Trabajo aceptado! Ya quedó en tus tareas.');
+  showToast('¡Trabajo aceptado! Ya quedó en tus tareas.', 'success', '🎉');
   await loadGlobal();
   await renderTrabajosDisponibles();
 }
