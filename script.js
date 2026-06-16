@@ -561,7 +561,8 @@ async function verReporteCasa(casaId) {
 async function toggleTareaReporte(id, casaId) {
   const { data } = await sb.from('tareas').select('done').eq('id',id).single();
   const done = !data.done;
-  await sb.from('tareas').update({ done, done_at: done?new Date().toISOString():null }).eq('id',id);
+  const { error } = await sb.from('tareas').update({ done, done_at: done?new Date().toISOString():null }).eq('id',id);
+  if (error) { alert('No se pudo actualizar la tarea: ' + error.message); return; }
   await verReporteCasa(casaId);
 }
  
@@ -915,7 +916,8 @@ async function deleteTarea(id) {
 async function toggleTarea(id) {
   const { data } = await sb.from('tareas').select('done').eq('id',id).single();
   const done = !data.done;
-  await sb.from('tareas').update({ done, done_at: done?new Date().toISOString():null }).eq('id',id);
+  const { error } = await sb.from('tareas').update({ done, done_at: done?new Date().toISOString():null }).eq('id',id);
+  if (error) { alert('No se pudo actualizar la tarea: ' + error.message); return; }
   await goTo(currentPage);
 }
  
