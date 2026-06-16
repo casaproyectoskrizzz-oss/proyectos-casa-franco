@@ -16,14 +16,19 @@ window.addEventListener('load', function() {
   initOneSignal();
 });
  
+let osInitDone = false;
+ 
 async function initOneSignal() {
   window.OneSignalDeferred.push(async function(OneSignal) {
+    if (osInitDone) { console.log('OneSignal ya estaba inicializado'); return; }
     try {
       await OneSignal.init({
         appId: OS_APP_ID,
         allowLocalhostAsSecureOrigin: true,
         notifyButton: { enable: false },
       });
+      osInitDone = true;
+      console.log('OneSignal init OK');
     } catch(e) { console.log('OneSignal init error:', e); }
   });
 }
@@ -31,11 +36,17 @@ async function initOneSignal() {
 async function pedirPermisoYGuardarToken() {
   window.OneSignalDeferred.push(async function(OneSignal) {
     try {
-      const permission = await OneSignal.Notifications.permission;
-      if (!permission) {
-        await OneSignal.Notifications.requestPermission();
+      await OneSignal.User.PushSubscription.optIn();
+ 
+      // Esperar un poco a que el navegador termine de registrar el token
+      let osId = OneSignal.User.PushSubscription.id;
+      let intentos = 0;
+      while (!osId && intentos < 10) {
+        await new Promise(r => setTimeout(r, 500));
+        osId = OneSignal.User.PushSubscription.id;
+        intentos++;
       }
-      const osId = OneSignal.User.PushSubscription.id;
+ 
       if (osId && ME) {
         await sb.from('push_tokens').upsert({
           empleado_id: ME.id,
@@ -43,9 +54,9 @@ async function pedirPermisoYGuardarToken() {
         }, { onConflict: 'empleado_id,onesignal_id' });
         console.log('Token guardado:', osId);
       } else {
-        console.log('Sin osId todavía. Permiso:', permission);
+        console.log('Sin osId después de esperar.');
       }
-    } catch(e) { console.log('Error guardando token:', e); }
+    } catch(e) { console.log('Error en optIn/token:', e); }
   });
 }
  
@@ -88,7 +99,7 @@ const TIPOS = {
  
 const NAV = {
   admin:     [{ id:'resumen', icon:'📊', label:'Resumen' },{ id:'casas', icon:'🏠', label:'Casas' },{ id:'empleados', icon:'👤', label:'Empleados' },{ id:'tareas', icon:'✅', label:'Tareas' },{ id:'equipo', icon:'👥', label:'Equipo y pagos' },{ id:'cotizacion', icon:'📋', label:'Cotización' },{ id:'mi-perfil', icon:'🔑', label:'Mi perfil' }],
-  encargado: [{ id:'resumen', icon:'📊', label:'Resumen' },{ id:'casas', icon:'🏠', label:'Casas' },{ id:'mis-tareas', icon:'✅', label:'Mis tareas' },{ id:'tareas', icon:'📝', label:'Tareas equipo' },{ id:'equipo', icon:'👥', label:'Equipo y pagos' },{ id:'mi-perfil', icon:'🔑', label:'Mi perfil' }],
+  encargado: [{ id:'resumen', icon:'📊', label:'Resumen' },{ id:'casas', icon:'🏠', label:'Casas' },{ id:'mis-tareas', icon:'✅', label:'Mis tareas' },{ id:'equipo', icon:'👥', label:'Equipo y pagos' },{ id:'mi-perfil', icon:'🔑', label:'Mi perfil' }],
   trabajador:[{ id:'mis-tareas', icon:'✅', label:'Mis tareas' },{ id:'mis-pagos', icon:'💰', label:'Mis pagos' },{ id:'mi-perfil', icon:'🔑', label:'Mi perfil' }],
 };
  
@@ -348,7 +359,7 @@ async function renderCasas() {
                 <div style="margin-top:14px">
                   ${casa.descripcion?`<div style="font-size:12px;color:var(--text3);margin-bottom:10px">${casa.descripcion}</div>`:''}
                   <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
-                    <button class="btn btn-sm btn-primary" onclick="event.stopPropagation();goToTareasCasa(${casa.id})">＋ Asignar tarea</button>
+                    ${ME.rol==='admin'?`<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();goToTareasCasa(${casa.id})">＋ Asignar tarea</button>`:''}
                     <button class="btn btn-sm" onclick="event.stopPropagation();verReporteCasa(${casa.id})">📄 Reporte</button>
                     ${ME.rol==='admin'?`<button class="btn btn-sm" onclick="event.stopPropagation();showFormEditarCasa(${casa.id})">✏ Editar</button>`:''}
                     ${ME.rol==='admin'?`<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deleteCasa(${casa.id})">🗑</button>`:''}
@@ -722,11 +733,15 @@ async function renderTareas(preselectCasaId=null) {
         <input type="text" id="fDesc" placeholder="Descripción de la tarea" />
       </div>
       <div class="form-row">
-        <div class="field"><label>Monto ($)</label><input type="number" id="fMonto" placeholder="0" /></div>
+        ${ME.rol==='admin'
+          ? `<div class="field"><label>Monto ($)</label><input type="number" id="fMonto" placeholder="0" /></div>`
+          : `<input type="hidden" id="fMonto" value="0" />`}
         <div class="field"><label>Fecha límite</label><input type="date" id="fFecha" /></div>
       </div>
+      ${ME.rol!=='admin' ? `<div class="alert alert-info">🔒 Solo el administrador puede definir el monto de pago. La tarea se asignará sin monto hasta que el admin lo agregue.</div>` : ''}
       <div class="field"><label>Notas</label><input type="text" id="fNotas" placeholder="Materiales, instrucciones..." /></div>
       <hr class="divider">
+      ${ME.rol==='admin' ? `
       <div class="card-title" style="font-size:13px">⚡ Selección múltiple con monto global</div>
       <div id="checklistContainer" style="display:none">
         <div id="checklist" class="checklist-grid"></div>
@@ -739,11 +754,11 @@ async function renderTareas(preselectCasaId=null) {
             <p id="montoCalc" style="font-size:12px;color:var(--text2);padding-bottom:9px"></p>
           </div>
         </div>
-      </div>
+      </div>` : `<div id="checklistContainer" style="display:none"><div id="checklist" class="checklist-grid"></div></div>`}
       <div id="fError" class="error-msg"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn btn-primary" onclick="addTarea()">Guardar tarea</button>
-        <button class="btn btn-purple" onclick="addTareasMultiples()">Guardar selección múltiple</button>
+        ${ME.rol==='admin' ? `<button class="btn btn-purple" onclick="addTareasMultiples()">Guardar selección múltiple</button>` : ''}
         <button class="btn" onclick="hideFormTarea()">Cancelar</button>
       </div>
     </div>
@@ -1019,15 +1034,39 @@ async function renderMisPagos() {
   const ganado   = mis.filter(t=>t.done).reduce((a,t)=>a+Number(t.monto),0);
   const porGanar = mis.filter(t=>!t.done).reduce((a,t)=>a+Number(t.monto),0);
  
+  const { data: abonosData } = await sb.from('abonos_pago').select('*').eq('empleado_id', ME.id).order('fecha',{ascending:false});
+  const abonos = abonosData || [];
+  const totalAbonado = abonos.reduce((a,ab)=>a+Number(ab.monto),0);
+  const pendientePago = Math.max(0, ganado - totalAbonado);
+ 
   $('pageContent').innerHTML = `
     <div class="page-header"><div><h2>💰 Mis pagos</h2><p>Tu resumen de ganancias</p></div></div>
     <div class="stats-grid">
-      <div class="stat-card stat-green"><div class="stat-num">${fmtMoney(ganado)}</div><div class="stat-lbl">Ganado</div></div>
+      <div class="stat-card stat-green"><div class="stat-num">${fmtMoney(ganado)}</div><div class="stat-lbl">Ganado (completado)</div></div>
       <div class="stat-card stat-amber"><div class="stat-num">${fmtMoney(porGanar)}</div><div class="stat-lbl">Por ganar</div></div>
       <div class="stat-card stat-cyan"><div class="stat-num">${fmtMoney(ganado+porGanar)}</div><div class="stat-lbl">Total</div></div>
     </div>
+ 
     <div class="card">
-      <div class="card-title">Detalle</div>
+      <div class="card-title">💵 Estado de pago</div>
+      <div class="stats-grid" style="grid-template-columns:repeat(2,1fr)">
+        <div class="stat-card stat-green"><div class="stat-num">${fmtMoney(totalAbonado)}</div><div class="stat-lbl">Ya te pagaron</div></div>
+        <div class="stat-card stat-amber"><div class="stat-num">${fmtMoney(pendientePago)}</div><div class="stat-lbl">Aún te deben</div></div>
+      </div>
+      ${abonos.length === 0
+        ? '<p style="font-size:13px;color:var(--text3);margin-top:10px">No tienes abonos registrados aún.</p>'
+        : `<div class="section-label" style="margin-top:10px">Historial de pagos</div>
+           ${abonos.map(ab => `
+             <div class="cot-row">
+               <div>
+                 <div style="font-weight:600;color:var(--green)">${fmtMoney(ab.monto)}</div>
+                 <div style="font-size:11px;color:var(--text3)">${fmtDate(ab.fecha)}${ab.notas?' · '+ab.notas:''}</div>
+               </div>
+             </div>`).join('')}`}
+    </div>
+ 
+    <div class="card">
+      <div class="card-title">Detalle de tareas</div>
       ${mis.length===0
         ? '<div class="empty-state"><div class="empty-icon">💸</div><p>Sin tareas aún.</p></div>'
         : `<div class="task-list">${mis.map(t=>`
@@ -1050,19 +1089,26 @@ async function renderMisPagos() {
 // ═══════════════════════════════════════════
 //  EQUIPO Y PAGOS
 // ═══════════════════════════════════════════
+let equipoAbierto = null;
+ 
 async function renderEquipo() {
   const { data: tareas } = await sb.from('tareas').select('*');
   const all = tareas||[];
   const workers = empleados.filter(e=>['trabajador','encargado'].includes(e.rol));
+ 
+  const { data: abonosData } = await sb.from('abonos_pago').select('*');
+  const abonos = abonosData || [];
+ 
   const totalGanado = workers.reduce((a,w)=>a+all.filter(t=>t.empleado_id===w.id&&t.done).reduce((s,t)=>s+Number(t.monto),0),0);
-  const totalPend   = workers.reduce((a,w)=>a+all.filter(t=>t.empleado_id===w.id&&!t.done).reduce((s,t)=>s+Number(t.monto),0),0);
+  const totalAbonadoGlobal = workers.reduce((a,w)=>a+abonos.filter(ab=>ab.empleado_id===w.id).reduce((s,ab)=>s+Number(ab.monto),0),0);
+  const totalPendGlobal = Math.max(0, totalGanado - totalAbonadoGlobal);
  
   $('pageContent').innerHTML = `
-    <div class="page-header"><div><h2>👥 Equipo y pagos</h2><p>Progreso por trabajador</p></div></div>
+    <div class="page-header"><div><h2>👥 Equipo y pagos</h2><p>Progreso y abonos por trabajador</p></div></div>
     <div class="stats-grid">
       <div class="stat-card stat-green"><div class="stat-num">${fmtMoney(totalGanado)}</div><div class="stat-lbl">Total ganado</div></div>
-      <div class="stat-card stat-amber"><div class="stat-num">${fmtMoney(totalPend)}</div><div class="stat-lbl">Por pagar</div></div>
-      <div class="stat-card stat-cyan"><div class="stat-num">${fmtMoney(totalGanado+totalPend)}</div><div class="stat-lbl">Total asignado</div></div>
+      <div class="stat-card stat-cyan"><div class="stat-num">${fmtMoney(totalAbonadoGlobal)}</div><div class="stat-lbl">Ya pagado</div></div>
+      <div class="stat-card stat-amber"><div class="stat-num">${fmtMoney(totalPendGlobal)}</div><div class="stat-lbl">Pendiente de pagar</div></div>
     </div>
     ${workers.length===0
       ? '<div class="card"><div class="empty-state"><div class="empty-icon">👥</div><p>No hay empleados.</p></div></div>'
@@ -1074,29 +1120,103 @@ async function renderEquipo() {
           const pend = mis.filter(t=>!t.done).reduce((a,t)=>a+Number(t.monto),0);
           const pct  = mis.length ? Math.round(done/mis.length*100) : 0;
           const tipos = [...new Set(mis.map(t=>t.tipo_trabajo).filter(Boolean))];
+ 
+          const misAbonos = abonos.filter(ab=>ab.empleado_id===w.id).sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
+          const totalAbonado = misAbonos.reduce((a,ab)=>a+Number(ab.monto),0);
+          const pendientePago = Math.max(0, gan - totalAbonado);
+          const abierto = equipoAbierto === w.id;
+ 
           return `
             <div class="card">
-              <div class="worker-row" style="border:none;padding:0 0 12px">
-                <div class="worker-avatar" style="background:${rc.avatarBg};color:${rc.avatarColor}">${initials(w.nombre)}</div>
-                <div class="worker-info">
-                  <div class="worker-name">${w.nombre}</div>
-                  <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">
-                    ${rolBadge(w.rol)}
-                    ${tipos.map(t=>tipoBadge(t)).join('')}
+              <div style="cursor:pointer" onclick="toggleEquipoAcordeon('${w.id}')">
+                <div class="worker-row" style="border:none;padding:0">
+                  <div class="worker-avatar" style="background:${rc.avatarBg};color:${rc.avatarColor}">${initials(w.nombre)}</div>
+                  <div class="worker-info">
+                    <div class="worker-name">${abierto?'▾':'▸'} ${w.nombre}</div>
+                    <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">
+                      ${rolBadge(w.rol)}
+                      ${tipos.map(t=>tipoBadge(t)).join('')}
+                    </div>
+                    <div style="font-size:11px;color:var(--text3);margin-top:4px">${done}/${mis.length} tareas</div>
+                    <div class="progress-bar" style="margin-top:6px"><div class="progress-fill" style="width:${pct}%"></div></div>
                   </div>
-                  <div style="font-size:11px;color:var(--text3);margin-top:4px">${done}/${mis.length} tareas</div>
-                  <div class="progress-bar" style="margin-top:6px"><div class="progress-fill" style="width:${pct}%"></div></div>
+                  <div class="worker-amount">
+                    ${fmtMoney(totalAbonado)}<small>pagado de ${fmtMoney(gan)}</small>
+                  </div>
                 </div>
-                <div class="worker-amount">${fmtMoney(gan)}<small>de ${fmtMoney(gan+pend)}</small></div>
               </div>
-              <hr class="divider" style="margin:0 0 10px">
-              <div class="task-list">
-                ${mis.length===0
-                  ? '<div class="empty-state" style="padding:.75rem"><p>Sin tareas</p></div>'
-                  : mis.map(t=>renderTaskItem(t,ME.rol==='admin',true)).join('')}
-              </div>
+ 
+              ${abierto ? `
+                <hr class="divider">
+                <div class="stats-grid" style="grid-template-columns:repeat(3,1fr)">
+                  <div class="stat-card stat-green"><div class="stat-num" style="font-size:16px">${fmtMoney(totalAbonado)}</div><div class="stat-lbl">Pagado</div></div>
+                  <div class="stat-card stat-amber"><div class="stat-num" style="font-size:16px">${fmtMoney(pendientePago)}</div><div class="stat-lbl">Pendiente</div></div>
+                  <div class="stat-card stat-cyan"><div class="stat-num" style="font-size:16px">${fmtMoney(gan)}</div><div class="stat-lbl">Total ganado</div></div>
+                </div>
+ 
+                ${ME.rol==='admin' ? `
+                  <div style="background:var(--bg3);border-radius:var(--radius);padding:12px;margin-top:10px">
+                    <div class="card-title" style="font-size:13px;margin-bottom:8px">💵 Registrar abono</div>
+                    <div class="form-row">
+                      <div class="field"><label>Monto ($)</label><input type="number" id="abMonto_${w.id}" placeholder="500" step="0.01" /></div>
+                      <div class="field"><label>Fecha</label><input type="date" id="abFecha_${w.id}" value="${new Date().toISOString().slice(0,10)}" /></div>
+                    </div>
+                    <div class="field"><label>Notas (opcional)</label><input type="text" id="abNotas_${w.id}" placeholder="Pago en efectivo, transferencia..." /></div>
+                    <div id="abError_${w.id}" class="error-msg"></div>
+                    <button class="btn btn-primary btn-sm" onclick="event.stopPropagation();registrarAbono('${w.id}')">＋ Registrar abono</button>
+                  </div>
+                ` : ''}
+ 
+                <div class="section-label" style="margin-top:14px">Historial de abonos</div>
+                ${misAbonos.length === 0
+                  ? '<p style="font-size:13px;color:var(--text3)">Sin abonos registrados.</p>'
+                  : misAbonos.map(ab => `
+                      <div class="cot-row">
+                        <div>
+                          <div style="font-weight:600;color:var(--green)">${fmtMoney(ab.monto)}</div>
+                          <div style="font-size:11px;color:var(--text3)">${fmtDate(ab.fecha)}${ab.notas?' · '+ab.notas:''}</div>
+                        </div>
+                        ${ME.rol==='admin'?`<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();eliminarAbono(${ab.id},'${w.id}')">🗑</button>`:''}
+                      </div>`).join('')}
+ 
+                <div class="section-label" style="margin-top:14px">Tareas</div>
+                <div class="task-list">
+                  ${mis.length===0
+                    ? '<div class="empty-state" style="padding:.75rem"><p>Sin tareas</p></div>'
+                    : mis.map(t=>renderTaskItem(t,ME.rol==='admin',true)).join('')}
+                </div>
+              ` : ''}
             </div>`;
         }).join('')}`;
+}
+ 
+function toggleEquipoAcordeon(empId) {
+  equipoAbierto = equipoAbierto === empId ? null : empId;
+  renderEquipo();
+}
+ 
+async function registrarAbono(empId) {
+  const monto = Number($('abMonto_'+empId).value)||0;
+  const fecha = $('abFecha_'+empId).value;
+  const notas = $('abNotas_'+empId).value.trim();
+  const errEl = $('abError_'+empId);
+ 
+  if (monto <= 0) { errEl.textContent = 'Ingresa un monto válido'; return; }
+  if (!fecha) { errEl.textContent = 'Selecciona una fecha'; return; }
+ 
+  const { error } = await sb.from('abonos_pago').insert({
+    empleado_id: empId, monto, fecha, notas: notas||null, registrado_por: ME.id,
+  });
+  if (error) { errEl.textContent = 'Error: '+error.message; return; }
+ 
+  errEl.textContent = '';
+  await renderEquipo();
+}
+ 
+async function eliminarAbono(abonoId, empId) {
+  if (!confirm('¿Eliminar este abono?')) return;
+  await sb.from('abonos_pago').delete().eq('id', abonoId);
+  await renderEquipo();
 }
  
 // ═══════════════════════════════════════════
